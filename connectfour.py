@@ -71,7 +71,7 @@ class ConnectFourState:
 
     @property
     def valid_actions(self):
-        """Return list o valid actions player can take in this state.
+        """Return list of valid actions player can take in this state.
 
         A valid action in this case is represented by column index.
         """
@@ -84,18 +84,25 @@ class ConnectFourState:
         b = self.board
         if self.turn == 1:
             b[[0, 1]] = b[[1, 0]]
+
+        # Run inference
         x = torch.from_numpy(b[np.newaxis, ...])
-        valid_mask = torch.zeros(GRID_HEIGHT, GRID_WIDTH, dtype=torch.float32)
+        p, v = net(x.float())
+        p = p.numpy()
+        v = v.numpy()
+
+        # Post-processing:
+        # Mask invalid outputs, re-normalize, map to 0-6 int action space
+        valid_mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
         for i in range(GRID_WIDTH):
             valid_mask[self._history.count(i), i] = 1
 
-        p, v = net(x.float())
         p *= valid_mask
-        if torch.sum(p) > 1e-5:
-            p /= torch.sum(p)
+        if np.sum(p) > 1e-5:
+            p /= np.sum(p)
         else:
-            p = valid_mask / torch.sum(valid_mask)
-
+            p = valid_mask / np.sum(valid_mask)
+        p = np.sum(p, axis=(1, 2))
         return p, v
 
 
