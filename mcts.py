@@ -81,15 +81,15 @@ class MCTreeNode:
         assert not self._expanded, "Multiple MCTreeNode expandsions is undefined."
         p, v = self.state.eval(net) # TODO: Enqueue and block for results
         self._edges['P'] = p
-        node = self.parent
+        # TODO: Need to handle multi-players here--i.e. should be -v for other
+        # player if +v for me in a two player game.
+        self._value = v
+        node = self
         while node is not None:
-            # TODO: Need to handle multi-players here--i.e. should be -v for other
-            # player if +v for me in a two player game.
-            node._total_value += v
-            
             if node.parent is not None:
                 prev_action = node.parent.children.index(node)
-                node._num_visits[prev_action] += 1
+                node.parent._edges['W'][prev_action] += v
+                node.parent._edges['N'][prev_action] += 1
             node = node.parent
 
 
