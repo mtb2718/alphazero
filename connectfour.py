@@ -95,14 +95,17 @@ class ConnectFourState:
         # Mask invalid outputs, re-normalize, map to 0-6 int action space
         valid_mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
         for i in range(GRID_WIDTH):
-            valid_mask[self._history.count(i), i] = 1
+            next_row = self._history.count(i)
+            if next_row < GRID_HEIGHT:
+                valid_mask[self._history.count(i), i] = 1
 
         p *= valid_mask
         if np.sum(p) > 1e-5:
             p /= np.sum(p)
         else:
             p = valid_mask / np.sum(valid_mask)
-        p = np.sum(p, axis=(1, 2))
+        p = np.sum(p, axis=(0, 1, 2))
+        p = p[self.valid_actions]
         return p, v
 
 

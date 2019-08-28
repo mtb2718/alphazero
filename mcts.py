@@ -14,10 +14,10 @@ class MCTreeNode:
         and book-keeping for MCTS.
         """
 
+        N = len(state.valid_actions)
+
         self._state = state
         self._parent = parent
-
-        N = len(state.valid_actions)
         self._value = 0
         self._expanded = False
         self._children = [None] * N
@@ -33,6 +33,10 @@ class MCTreeNode:
         # nodes. Since a game state can be reached from multiple paths, we should
         # let the game node decide how much game history (if any) belongs in the state.
         return self._children
+
+    @property
+    def expanded(self):
+        return self._expanded
 
     @property
     def state(self):
@@ -62,10 +66,13 @@ class MCTreeNode:
         # P(s, a)
         return self._edges['P']
 
-    def traverse(self, action):
+    def commit(self, action):
         """Construct new game state that results from taking given action and return the
         corresponding MCTreeNode in the search tree.
         """
+
+        # TODO: This method should return the tree's new root and discard all dead paths
+        # Should also invert all 'values' in tree to reflect new current player
         if self._children[action] is None:
             new_state = self._state.copy()
             new_state.take_action(action)
@@ -73,31 +80,42 @@ class MCTreeNode:
             self._children[action] = new_node
         return self._children[action]
 
-    def expand(self, net):
+    def expand(self, turn, p, v):
         """Evaluate policy and value of this node's state with the given model.
         
         Update the internally tracked values in the ndoe and backup results in tree.
         """
         assert not self._expanded, "Multiple MCTreeNode expandsions is undefined."
-        p, v = self.state.eval(net) # TODO: Enqueue and block for results
+        print(f"Expanding state:")
+        print(f"  History: {self.state._history}")
+        print(f"  Turn   : {turn}")
+        print(f"  prior  : {p}")
+        print(f"  value  : {v}")
+
         self._edges['P'] = p
-        # TODO: Need to handle multi-players here--i.e. should be -v for other
+
+        # We need to handle multi-players here--i.e. should be -v for other
         # player if +v for me in a two player game.
-        self._value = v
+        def sign(state): return 1 if turn == state.turn else -1
+
+        self._value = sign(self.state) * v
         node = self
         while node is not None:
             if node.parent is not None:
                 prev_action = node.parent.children.index(node)
-                node.parent._edges['W'][prev_action] += v
+                s = sign(node.parent.state)
+                node.parent._edges['W'][prev_action] += s * v
                 node.parent._edges['N'][prev_action] += 1
             node = node.parent
 
 
-def mcts(root, net, num_expansions, c_puct=0.001):
+def mcts_expand(root, net, c_puct=0.001):
     """Expand the tree from the given 'root' node 'num_expansion' times.
 
     In other words, add 'num_expansion' MCTreeNode's to the tree originating at 'root',
     where the added nodes are selected via MCTS upper-confidence bound. TODO: clarify.
+
+    TODO: update comment to reflect code
 
     """
 
@@ -105,24 +123,25 @@ def mcts(root, net, num_expansions, c_puct=0.001):
     #       ii.  If state hasn't been visited, evaluate (v, pi) = f(s), backup result
     #       iii. Else, traverse branch of a = argmax U(s,a)
 
-    for _ in range(num_expansions):
+    node = root
 
-        node = root
+    while True:
 
-        while True:
-
-            if np.sum(node.num_visits) == 0:
-                node.expand(net)
-                break
-
+        if not node.expanded:
+            if node.state.winner is not None:
+                p = node.action_prior
+                v = 0 if node.state.winner == -1 else 1
             else:
-                # TODO: implement for real
-                import pdb; pdb.set_trace()
-                U = c_puct * node.P_a * sqrt(sum(node.num_visits)) / (1 + node.num_visits)
-                a = argmax(node.Q + U)
+                # TODO: Enqueue and block for results
+                p, v = node.state.eval(net)
+            node.expand(root.state.turn, p, v)
+            break
 
-                # Just traverse, nothing fancy
-                node = node.traverse(a)
+        else:
+            import pdb; pdb.set_trace()
+            U = c_puct * node.action_prior * np.sqrt(np.sum(node.num_visits)) / (1 + node.num_visits)
+            a = argmax(node.Q + U)
+            node = node.children[a]
 
 
 def update_network(net, state_buffer):
@@ -164,9 +183,10 @@ def alphazero_train():
         tree = MCTreeNode(ConnectFourState())
 
         while tree.state.winner is None:
-            mcts(tree, net, NUM_EXPANSIONS_PER_DECISION)
+            for _ in range(NUM_EXPANSIONS_PER_DECISION):
+                mcts_expand(tree, net)
             action = np.argmax(tree.num_visits)
-            tree = tree.traverse(action)
+            tree = tree.commit(action)
         update_databuffer(tree, state_buffer)
         update_network(net, state_buffer)
 
