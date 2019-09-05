@@ -111,26 +111,25 @@ class MCTreeNode:
         self._expanded = True
         print(f"Expanding state: {self.state._history}")
         print(f"  Turn: {turn}")
-        print(f"  p/v: {p}/{v}")
+        print(f"  P: {p}")
+        print(f"  v: {v}")
+
+        # Assume each player acts optimaly, so that our action prior and state value
+        # is always from the point-of-view of whoever's turn it is. However, (for a
+        # two player game), we need to reverse the sign of the value in each backup
+        # step working back towards the root of the tree. Intuitively, a strong position
+        # for the current player implies weakness in the opponents prior position.
 
         self._edges['P'] = p
+        self._value = v
 
-        # We need to handle multi-players here--i.e. should be -v for other
-        # player if +v for me in a two player game.
-        # ^^ Not true???
-        # Assume every player will make strongest possible move
-        # So, player has no bearing on node value until a winner is seleted
-        def sign(state): return 1 if turn == state.turn else -1
-
-        self._value = sign(self.state) * v
         node = self
-        while node is not None:
-            if node.parent is not None:
-                prev_action = node.parent.children.index(node)
-                s = sign(node.parent.state)
-                s = 1
-                node.parent._edges['W'][prev_action] += s * v
-                node.parent._edges['N'][prev_action] += 1
+        while node.parent is not None:
+            v *= -1 # Reverse sign of value for each successive parent
+            print(f'  Backing up value of state {node.parent.state._history}: {v}')
+            prev_action = node.parent.children.index(node)
+            node.parent._edges['W'][prev_action] += v
+            node.parent._edges['N'][prev_action] += 1
             node = node.parent
 
 
@@ -198,12 +197,14 @@ def alphazero_train():
     # 3. Train network for N batches of K game states
 
     net = AlphaC4()
-    test_mode(net)
     state_buffer = [] # TODO: more fancy
 
     NUM_EXPANSIONS_PER_DECISION = 4
 
-    while True: # TODO: check for convergence
+    #while True: # TODO: check for convergence
+    for _ in range(4):
+        print('----------')
+
         tree = MCTreeNode(ConnectFourState())
 
         with torch.no_grad():

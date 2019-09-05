@@ -92,7 +92,7 @@ class ConnectFourState:
         x = torch.from_numpy(b[np.newaxis, ...])
         p, v = net(x.float())
         p = p.numpy()
-        v = v.numpy()
+        v = float(v.numpy())
 
         # Post-processing:
         # Mask invalid outputs, re-normalize, map to 0-6 int action space
@@ -100,7 +100,7 @@ class ConnectFourState:
         for i in range(GRID_WIDTH):
             next_row = self._history.count(i)
             if next_row < GRID_HEIGHT:
-                valid_mask[self._history.count(i), i] = 1
+                valid_mask[next_row, i] = 1
 
         p *= valid_mask
         if np.sum(p) > 1e-5:
