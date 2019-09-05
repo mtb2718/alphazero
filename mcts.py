@@ -1,6 +1,7 @@
 from connectfour import AlphaC4, ConnectFourState
 
 import numpy as np
+import torch
 
 
 class MCTreeNode:
@@ -57,7 +58,8 @@ class MCTreeNode:
         # Q(s, a)
         W = self._edges['W']
         N = self._edges['N']
-        Q = W / N
+        Q = W
+        Q[N != 0] /= N[N != 0]
         Q[N == 0] = 0
         return Q
 
@@ -67,6 +69,26 @@ class MCTreeNode:
         return self._edges['P']
 
     def commit(self, action):
+        """Construct new game state that results from taking given action and return the
+        corresponding MCTreeNode in the search tree.
+        """
+
+        # TODO: This method should return the tree's new root and discard all dead paths
+        # Should also invert all 'values' in tree to reflect new current player
+
+        print(f'Player {self.state.turn} committing to action {action}')
+
+        if self._children[action] is None:
+            new_state = self._state.copy()
+            new_state.take_action(action)
+            new_node = MCTreeNode(new_state, self)
+            self._children[action] = new_node
+        new_root = self._children[action]
+
+        return new_root
+
+
+    def traverse(self, action):
         """Construct new game state that results from taking given action and return the
         corresponding MCTreeNode in the search tree.
         """
@@ -86,16 +108,18 @@ class MCTreeNode:
         Update the internally tracked values in the ndoe and backup results in tree.
         """
         assert not self._expanded, "Multiple MCTreeNode expandsions is undefined."
-        print(f"Expanding state:")
-        print(f"  History: {self.state._history}")
-        print(f"  Turn   : {turn}")
-        print(f"  prior  : {p}")
-        print(f"  value  : {v}")
+        self._expanded = True
+        print(f"Expanding state: {self.state._history}")
+        print(f"  Turn: {turn}")
+        print(f"  p/v: {p}/{v}")
 
         self._edges['P'] = p
 
         # We need to handle multi-players here--i.e. should be -v for other
         # player if +v for me in a two player game.
+        # ^^ Not true???
+        # Assume every player will make strongest possible move
+        # So, player has no bearing on node value until a winner is seleted
         def sign(state): return 1 if turn == state.turn else -1
 
         self._value = sign(self.state) * v
@@ -104,6 +128,7 @@ class MCTreeNode:
             if node.parent is not None:
                 prev_action = node.parent.children.index(node)
                 s = sign(node.parent.state)
+                s = 1
                 node.parent._edges['W'][prev_action] += s * v
                 node.parent._edges['N'][prev_action] += 1
             node = node.parent
@@ -114,11 +139,7 @@ def mcts_expand(root, net, c_puct=0.001):
 
     In other words, add 'num_expansion' MCTreeNode's to the tree originating at 'root',
     where the added nodes are selected via MCTS upper-confidence bound. TODO: clarify.
-
-    TODO: update comment to reflect code
-
     """
-
     #       i.   If game is over in current (simulated) state, backup result
     #       ii.  If state hasn't been visited, evaluate (v, pi) = f(s), backup result
     #       iii. Else, traverse branch of a = argmax U(s,a)
@@ -138,14 +159,23 @@ def mcts_expand(root, net, c_puct=0.001):
             break
 
         else:
-            import pdb; pdb.set_trace()
+            # TODO: Move this calculation to a TreeNode method
             U = c_puct * node.action_prior * np.sqrt(np.sum(node.num_visits)) / (1 + node.num_visits)
-            a = argmax(node.Q + U)
-            node = node.children[a]
+            a = np.argmax(node.mean_value + U)
+            node = node.traverse(a)
+
+
+def mcts_commit(tree):
+    """Take action at root of tree
+    """
+    action = np.argmax(tree.num_visits)
+    tree = tree.commit(action)
+    return tree
 
 
 def update_network(net, state_buffer):
     print('TODO: update net')
+
 
 def update_databuffer(leaf, state_buffer):
     pass
@@ -154,12 +184,6 @@ def update_databuffer(leaf, state_buffer):
 # TODO: MCTS should be a utility
 # Two main functions are to "play" or "simulate" and training
 # Could run in parallel or in a single thread as below
-
-def test_mode(model):
-    model.train(False)
-    for param in model.parameters():
-        param.requires_grad = False
-
 def alphazero_train():
     # Until converged:
     # 0. Start new game
@@ -177,19 +201,21 @@ def alphazero_train():
     test_mode(net)
     state_buffer = [] # TODO: more fancy
 
-    NUM_EXPANSIONS_PER_DECISION = 2
+    NUM_EXPANSIONS_PER_DECISION = 4
 
     while True: # TODO: check for convergence
         tree = MCTreeNode(ConnectFourState())
 
-        while tree.state.winner is None:
-            for _ in range(NUM_EXPANSIONS_PER_DECISION):
-                mcts_expand(tree, net)
-            action = np.argmax(tree.num_visits)
-            tree = tree.commit(action)
+        with torch.no_grad():
+            while tree.state.winner is None:
+                for _ in range(NUM_EXPANSIONS_PER_DECISION):
+                    mcts_expand(tree, net)
+                tree = mcts_commit(tree)
+
         update_databuffer(tree, state_buffer)
         update_network(net, state_buffer)
 
 
 if __name__ == '__main__':
     alphazero_train()
+
