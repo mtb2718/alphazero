@@ -105,7 +105,7 @@ class MCTreeNode:
     def expand(self, turn, p, v):
         """Evaluate policy and value of this node's state with the given model.
         
-        Update the internally tracked values in the ndoe and backup results in tree.
+        Update the internally tracked values in the node and backup results in tree.
         """
         assert not self._expanded, "Multiple MCTreeNode expandsions is undefined."
         self._expanded = True
@@ -114,7 +114,7 @@ class MCTreeNode:
         print(f"  P: {p}")
         print(f"  v: {v}")
 
-        # Assume each player acts optimaly, so that our action prior and state value
+        # Assume each player acts optimally, so that our action prior and state value
         # is always from the point-of-view of whoever's turn it is. However, (for a
         # two player game), we need to reverse the sign of the value in each backup
         # step working back towards the root of the tree. Intuitively, a strong position
@@ -126,7 +126,6 @@ class MCTreeNode:
         node = self
         while node.parent is not None:
             v *= -1 # Reverse sign of value for each successive parent
-            print(f'  Backing up value of state {node.parent.state._history}: {v}')
             prev_action = node.parent.children.index(node)
             node.parent._edges['W'][prev_action] += v
             node.parent._edges['N'][prev_action] += 1
@@ -167,7 +166,8 @@ def mcts_expand(root, net, c_puct=0.001):
 def mcts_commit(tree):
     """Take action at root of tree
     """
-    action = np.argmax(tree.num_visits)
+    action_index = np.argmax(tree.num_visits)
+    action = tree.state.valid_actions[action_index]
     tree = tree.commit(action)
     return tree
 
@@ -208,7 +208,9 @@ def alphazero_train():
         tree = MCTreeNode(ConnectFourState())
 
         with torch.no_grad():
+            # Play one game
             while tree.state.winner is None:
+                # Make one move
                 for _ in range(NUM_EXPANSIONS_PER_DECISION):
                     mcts_expand(tree, net)
                 tree = mcts_commit(tree)

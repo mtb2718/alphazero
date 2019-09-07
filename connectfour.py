@@ -41,6 +41,7 @@ class AlphaC4(torch.nn.Module):
 
         self._value_head = torch.nn.Sequential(
             torch.nn.Conv2d(8, 1, (6, 7), padding=0, stride=1, bias=True),
+            torch.nn.Tanh(),
         )
 
     def forward(self, board):
@@ -91,7 +92,7 @@ class ConnectFourState:
         # Run inference
         x = torch.from_numpy(b[np.newaxis, ...])
         p, v = net(x.float())
-        p = p.numpy()
+        p = p[0].numpy() # Get rid of batch dim
         v = float(v.numpy())
 
         # Post-processing:
@@ -107,7 +108,7 @@ class ConnectFourState:
             p /= np.sum(p)
         else:
             p = valid_mask / np.sum(valid_mask)
-        p = np.sum(p, axis=(0, 1, 2))
+        p = np.sum(p, axis=(0, 1))
         p = p[self.valid_actions]
         return p, v
 
