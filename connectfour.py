@@ -79,20 +79,22 @@ class ConnectFourState:
 
         A valid action in this case is represented by column index.
         """
+
         return [i for i in range(GRID_WIDTH) if self._history.count(i) < GRID_HEIGHT]
 
 
     def eval(self, net):
 
-        # Channel 0 always equals current player's position
         b = self.board
+
+        # Channel 0 always equals current player's position
         if self.turn == 1:
             b[[0, 1]] = b[[1, 0]]
 
         # Run inference
         x = torch.from_numpy(b[np.newaxis, ...])
         p, v = net(x.float())
-        p = p[0].numpy() # Get rid of batch dim
+        p = p.numpy().reshape(GRID_HEIGHT, GRID_WIDTH) # Get rid of BC dims
         v = float(v.numpy())
 
         # Post-processing:
@@ -108,7 +110,7 @@ class ConnectFourState:
             p /= np.sum(p)
         else:
             p = valid_mask / np.sum(valid_mask)
-        p = np.sum(p, axis=(0, 1))
+        p = np.sum(p, axis=0)
         p = p[self.valid_actions]
         return p, v
 
@@ -119,16 +121,15 @@ class ConnectFourState:
         return o
 
 
-    def take_action(self, col):
+    def take_action(self, action_index):
         """Take current player's move.
         Args:
-            col (int) - drop a piece in this column.
-        Returns True on success, False for invalid moves.
+            action_index (int) - index in self.valid_actions of the selected column
         """
-        if col in self.valid_actions:
-            self._history.append(col)
-            return True
-        return False
+
+        assert action_index >= 0 and action_index < len(self.valid_actions)
+        col = self.valid_actions[action_index]
+        self._history.append(col)
 
 
     @property
@@ -141,15 +142,17 @@ class ConnectFourState:
         """
         winner = None
 
-        h0 = np.ones((1, 4)) / 4
-        h1 = np.ones((4, 1)) / 4
-        h2 = np.eye(4) / 4
-        h3 = np.eye(4)[::-1] / 4
+        h0 = np.ones((1, 4))
+        h1 = np.ones((4, 1))
+        h2 = np.eye(4)
+        h3 = np.eye(4)[::-1]
 
         board = self.board
         for p, h in product([0, 1], [h0, h1, h2, h3]):
-            if np.any(convolve2d(board[p], h, 'valid') >= 1):
-                assert winner is None, 'Game cannot have multiple winners.'
+            if np.any(convolve2d(board[p], h, 'valid') > 3):
+                if winner is not None and winner != p:
+                    import pdb; pdb.set_trace()
+                assert winner is None or winner == p, 'Game cannot have multiple winners.'
                 winner = p
 
         if winner is None and len(self.valid_actions) == 0:

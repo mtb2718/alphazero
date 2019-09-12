@@ -68,39 +68,19 @@ class MCTreeNode:
         # P(s, a)
         return self._edges['P']
 
-    def commit(self, action):
+    def traverse(self, action_index):
         """Construct new game state that results from taking given action and return the
         corresponding MCTreeNode in the search tree.
         """
 
         # TODO: This method should return the tree's new root and discard all dead paths
         # Should also invert all 'values' in tree to reflect new current player
-
-        print(f'Player {self.state.turn} committing to action {action}')
-
-        if self._children[action] is None:
-            new_state = self._state.copy()
-            new_state.take_action(action)
+        if self._children[action_index] is None:
+            new_state = self.state.copy()
+            new_state.take_action(action_index)
             new_node = MCTreeNode(new_state, self)
-            self._children[action] = new_node
-        new_root = self._children[action]
-
-        return new_root
-
-
-    def traverse(self, action):
-        """Construct new game state that results from taking given action and return the
-        corresponding MCTreeNode in the search tree.
-        """
-
-        # TODO: This method should return the tree's new root and discard all dead paths
-        # Should also invert all 'values' in tree to reflect new current player
-        if self._children[action] is None:
-            new_state = self._state.copy()
-            new_state.take_action(action)
-            new_node = MCTreeNode(new_state, self)
-            self._children[action] = new_node
-        return self._children[action]
+            self._children[action_index] = new_node
+        return self._children[action_index]
 
     def expand(self, turn, p, v):
         """Evaluate policy and value of this node's state with the given model.
@@ -110,9 +90,9 @@ class MCTreeNode:
         assert not self._expanded, "Multiple MCTreeNode expandsions is undefined."
         self._expanded = True
         print(f"Expanding state: {self.state._history}")
-        print(f"  Turn: {turn}")
-        print(f"  P: {p}")
-        print(f"  v: {v}")
+        #print(f"  Turn: {turn}")
+        #print(f"  P: {p}")
+        #print(f"  v: {v}")
 
         # Assume each player acts optimally, so that our action prior and state value
         # is always from the point-of-view of whoever's turn it is. However, (for a
@@ -133,9 +113,9 @@ class MCTreeNode:
 
 
 def mcts_expand(root, net, c_puct=0.001):
-    """Expand the tree from the given 'root' node 'num_expansion' times.
+    """Expand the tree from the given 'root' node.
 
-    In other words, add 'num_expansion' MCTreeNode's to the tree originating at 'root',
+    In other words, add one MCTreeNode to the tree originating at 'root',
     where the added nodes are selected via MCTS upper-confidence bound. TODO: clarify.
     """
     #       i.   If game is over in current (simulated) state, backup result
@@ -156,20 +136,15 @@ def mcts_expand(root, net, c_puct=0.001):
             node.expand(root.state.turn, p, v)
             break
 
+        elif node.state.winner is not None:
+            # Traversed tree to terminal state, nothing to do.
+            break
+
         else:
             # TODO: Move this calculation to a TreeNode method
             U = c_puct * node.action_prior * np.sqrt(np.sum(node.num_visits)) / (1 + node.num_visits)
-            a = np.argmax(node.mean_value + U)
-            node = node.traverse(a)
-
-
-def mcts_commit(tree):
-    """Take action at root of tree
-    """
-    action_index = np.argmax(tree.num_visits)
-    action = tree.state.valid_actions[action_index]
-    tree = tree.commit(action)
-    return tree
+            i = np.argmax(node.mean_value + U)
+            node = node.traverse(i)
 
 
 def update_network(net, state_buffer):
@@ -177,7 +152,9 @@ def update_network(net, state_buffer):
 
 
 def update_databuffer(leaf, state_buffer):
-    pass
+    import pdb; pdb.set_trace()
+
+    # Fill state buffer with (node, value, visit count)
 
 
 # TODO: MCTS should be a utility
@@ -213,7 +190,8 @@ def alphazero_train():
                 # Make one move
                 for _ in range(NUM_EXPANSIONS_PER_DECISION):
                     mcts_expand(tree, net)
-                tree = mcts_commit(tree)
+                tree = tree.traverse(np.argmax(tree.num_visits))
+            print(f'Winner {tree.state.winner}')
 
         update_databuffer(tree, state_buffer)
         update_network(net, state_buffer)
