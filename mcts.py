@@ -2,6 +2,8 @@ from connectfour import AlphaC4, ConnectFourState
 
 import numpy as np
 import torch
+from torch.nn.functional import log_softmax
+from torch.optim import SGD
 
 
 class MCTreeNode:
@@ -44,6 +46,11 @@ class MCTreeNode:
         return self._state
 
     @property
+    def action_prior(self):
+        # P(s, a)
+        return self._edges['P']
+
+    @property
     def num_visits(self):
         # N(s, a)
         return self._edges['N']
@@ -62,11 +69,6 @@ class MCTreeNode:
         Q[N != 0] /= N[N != 0]
         Q[N == 0] = 0
         return Q
-
-    @property
-    def action_prior(self):
-        # P(s, a)
-        return self._edges['P']
 
     def traverse(self, action_index):
         """Construct new game state that results from taking given action and return the
@@ -89,7 +91,7 @@ class MCTreeNode:
         """
         assert not self._expanded, "Multiple MCTreeNode expandsions is undefined."
         self._expanded = True
-        print(f"Expanding state: {self.state._history}")
+        #print(f"Expanding state: {self.state._history}")
         #print(f"  Turn: {turn}")
         #print(f"  P: {p}")
         #print(f"  v: {v}")
@@ -117,6 +119,8 @@ def mcts_expand(root, net, c_puct=0.001):
 
     In other words, add one MCTreeNode to the tree originating at 'root',
     where the added nodes are selected via MCTS upper-confidence bound. TODO: clarify.
+
+    # TODO: Combine with MCTreeNode.expand method?
     """
     #       i.   If game is over in current (simulated) state, backup result
     #       ii.  If state hasn't been visited, evaluate (v, pi) = f(s), backup result
@@ -147,14 +151,102 @@ def mcts_expand(root, net, c_puct=0.001):
             node = node.traverse(i)
 
 
-def update_network(net, state_buffer):
-    print('TODO: update net')
-
-
 def update_databuffer(leaf, state_buffer):
-    import pdb; pdb.set_trace()
+    # Assign value of leaf state and parents based on outcome of game.
+    # 0 for draw, otherwise assume all leaf states corresponding to current player winning.
+    # TODO: Add support for multiplayer games (Blokus)
+    assert leaf.state.winner is not None
+    value = 1 if leaf.state.winner >= 0 else 0
 
-    # Fill state buffer with (node, value, visit count)
+    MAX_BUFFER_SIZE = 64 * 1024
+
+    # Fill state buffer with (node, value, action distribution)
+    node = leaf
+
+    while node is not None:
+        total_num_visits = np.sum(node.num_visits)
+        if total_num_visits > 0:
+            action_distribution = node.num_visits / total_num_visits
+        else:
+            action_distribution = None
+        state_buffer.append((node.state, value, action_distribution))
+        value *= -1
+        node = node.parent
+
+    state_buffer = state_buffer[-MAX_BUFFER_SIZE:]
+    print(f'Updated buffer, now contains {len(state_buffer)} states')
+
+
+def update_network(net, optimizer, state_buffer, game_iter):
+
+    # 1. sample a batch from state_buffer
+    # 2. do a forward pass
+    # 3. post-processing for valid moves?
+    # 4. evaluate loss, do .backward()
+    # 5. save results, checkpoints
+
+    B = 64
+
+    # Don't update network unless we can make a full batch
+    if len(state_buffer) < B:
+        return
+
+    sample_indices = np.random.choice(len(state_buffer), B, False)
+
+    # TODO: shared code with node.eval
+    # Should maybe also make use of datasets / dataworkers
+
+    x = torch.zeros(B, 2, 6, 7)
+    z = torch.zeros(B, 1, 1, 1)
+    p = torch.zeros(B, 1, 6, 7)
+    p_valid = torch.ones(B, dtype=torch.bool)
+    valid_action_mask = torch.zeros(B, 1, 6, 7)
+
+    for i, s in enumerate(sample_indices):
+        state, zi, pi = state_buffer[s]
+        board = state.board
+
+        # Channel 0 always equals current player's position
+        if state.turn == 1:
+            board[[0, 1]] = board[[1, 0]]
+
+        x[i] = torch.from_numpy(board)
+        z[i] = zi
+
+        for c in range(7):
+            next_row = state._history.count(c)
+            if next_row < 6:
+                valid_action_mask[i, 0, next_row, c] = 1
+
+        # Convert pi from list of action probabilities to board representation
+        # Note we'll mask all invalid moves outside of this loop, below.
+        if pi is None:
+            # pi may be None for terminal game states, where children visit counts will be 0.
+            p_valid[i] = 0
+        else:
+            for j, ai in enumerate(state.valid_actions):
+                p[i, 0, :, ai] = pi[j]
+
+    # Run inference
+    p_hat, v_hat = net(x.float())
+
+    # Mask out invalid actions in both the prediction and the target.
+    p *= valid_action_mask
+    p_hat *= valid_action_mask
+
+    # Calculate loss
+    l_v = ((z - v_hat) ** 2).view(B)
+    logp_hat = log_softmax(p_hat.view(B, -1), dim=1)
+    l_p = torch.sum(p.view(B, -1) * logp_hat, dim=1)
+    l_p[~p_valid] = 0.0
+
+    total_loss = torch.sum(l_v + l_p)
+    print(f'Total loss: {total_loss}, vloss: {torch.sum(l_v)}, ploss: {torch.sum(l_p)}')
+
+    optimizer.zero_grad()
+    total_loss.backward()
+    optimizer.step()
+
 
 
 # TODO: MCTS should be a utility
@@ -174,13 +266,14 @@ def alphazero_train():
     # 3. Train network for N batches of K game states
 
     net = AlphaC4()
+    optimizer = SGD(net.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4)
     state_buffer = [] # TODO: more fancy
 
-    NUM_EXPANSIONS_PER_DECISION = 4
+    NUM_EXPANSIONS_PER_DECISION = 16
 
     #while True: # TODO: check for convergence
-    for _ in range(4):
-        print('----------')
+    i = 0
+    for _ in range(100):
 
         tree = MCTreeNode(ConnectFourState())
 
@@ -191,12 +284,15 @@ def alphazero_train():
                 for _ in range(NUM_EXPANSIONS_PER_DECISION):
                     mcts_expand(tree, net)
                 tree = tree.traverse(np.argmax(tree.num_visits))
-            print(f'Winner {tree.state.winner}')
+            print(f'Game {i} winner: Player {tree.state.winner}')
 
         update_databuffer(tree, state_buffer)
-        update_network(net, state_buffer)
+        update_network(net, optimizer, state_buffer, i)
+        i += 1
 
 
 if __name__ == '__main__':
+    torch.autograd.set_detect_anomaly(True)
     alphazero_train()
 
+    print('Done.')

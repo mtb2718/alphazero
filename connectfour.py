@@ -14,10 +14,10 @@ class AlphaC4(torch.nn.Module):
     def __init__(self):
         super(AlphaC4, self).__init__()
         self._backbone = torch.nn.Sequential(
-            torch.nn.Conv2d(2, 16, (3, 3), padding=1, stride=1, bias=False),
-            torch.nn.BatchNorm2d(16),
+            torch.nn.Conv2d(2, 64, (5, 5), padding=2, stride=1, bias=False),
+            torch.nn.BatchNorm2d(64),
             torch.nn.ReLU(True),
-            torch.nn.Conv2d(16, 32, (3, 3), padding=1, stride=1, bias=False),
+            torch.nn.Conv2d(64, 32, (3, 3), padding=1, stride=1, bias=False),
             torch.nn.BatchNorm2d(32),
             torch.nn.ReLU(True),
             torch.nn.Conv2d(32, 32, (3, 3), padding=1, stride=1, bias=False),
@@ -36,7 +36,7 @@ class AlphaC4(torch.nn.Module):
 
         self._policy_head = torch.nn.Sequential(
             torch.nn.Conv2d(8, 6 * 7, (6, 7), padding=0, stride=1, bias=True),
-            torch.nn.ReLU(True),
+            torch.nn.ReLU(),
         )
 
         self._value_head = torch.nn.Sequential(
@@ -46,7 +46,7 @@ class AlphaC4(torch.nn.Module):
 
     def forward(self, board):
         feat = self._backbone(board)
-        p = self._policy_head(feat).reshape(-1, 1, 6, 7)
+        p = self._policy_head(feat).reshape(-1, 1, GRID_HEIGHT, GRID_WIDTH)
         v = self._value_head(feat)
         return p, v
 
