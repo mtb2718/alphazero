@@ -1,6 +1,7 @@
 from itertools import product
 
 import torch
+from torch.nn.functional import softmax
 import numpy as np
 from scipy.signal import convolve2d
 
@@ -14,7 +15,7 @@ class AlphaC4(torch.nn.Module):
     def __init__(self):
         super(AlphaC4, self).__init__()
         self._backbone = torch.nn.Sequential(
-            torch.nn.Conv2d(2, 64, (5, 5), padding=2, stride=1, bias=False),
+            torch.nn.Conv2d(2, 64, (3, 3), padding=1, stride=1, bias=False),
             torch.nn.BatchNorm2d(64),
             torch.nn.ReLU(True),
             torch.nn.Conv2d(64, 32, (3, 3), padding=1, stride=1, bias=False),
@@ -29,18 +30,25 @@ class AlphaC4(torch.nn.Module):
             torch.nn.Conv2d(32, 32, (3, 3), padding=1, stride=1, bias=False),
             torch.nn.BatchNorm2d(32),
             torch.nn.ReLU(True),
-            torch.nn.Conv2d(32, 8, (1, 1), padding=0, stride=1, bias=False),
-            torch.nn.BatchNorm2d(8),
+            torch.nn.Conv2d(32, 32, (3, 3), padding=1, stride=1, bias=False),
+            torch.nn.BatchNorm2d(32),
             torch.nn.ReLU(True),
         )
 
         self._policy_head = torch.nn.Sequential(
-            torch.nn.Conv2d(8, 6 * 7, (6, 7), padding=0, stride=1, bias=True),
-            torch.nn.ReLU(),
+            torch.nn.Conv2d(32, 2, (1, 1)),
+            torch.nn.BatchNorm2d(2),
+            torch.nn.ReLU(True),
+            torch.nn.Conv2d(2, 6 * 7, (6, 7), padding=0, stride=1, bias=True),
         )
 
         self._value_head = torch.nn.Sequential(
-            torch.nn.Conv2d(8, 1, (6, 7), padding=0, stride=1, bias=True),
+            torch.nn.Conv2d(32, 1, (1, 1), bias=False),
+            torch.nn.BatchNorm2d(1),
+            torch.nn.ReLU(True),
+            torch.nn.Conv2d(1, 256, (6, 7), padding=0, stride=1, bias=True),
+            torch.nn.ReLU(True),
+            torch.nn.Conv2d(256, 1, (1, 1), padding=0, stride=1, bias=True),
             torch.nn.Tanh(),
         )
 
@@ -94,25 +102,21 @@ class ConnectFourState:
         # Run inference
         x = torch.from_numpy(b[np.newaxis, ...])
         p, v = net(x.float())
-        p = p.numpy().reshape(GRID_HEIGHT, GRID_WIDTH) # Get rid of BC dims
-        v = float(v.numpy())
 
         # Post-processing:
         # Mask invalid outputs, re-normalize, map to 0-6 int action space
-        valid_mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        valid_mask = torch.zeros((GRID_HEIGHT, GRID_WIDTH))
         for i in range(GRID_WIDTH):
             next_row = self._history.count(i)
             if next_row < GRID_HEIGHT:
                 valid_mask[next_row, i] = 1
 
-        p *= valid_mask
-        if np.sum(p) > 1e-5:
-            p /= np.sum(p)
-        else:
-            p = valid_mask / np.sum(valid_mask)
-        p = np.sum(p, axis=0)
+        p = p.view(GRID_HEIGHT, GRID_WIDTH) # Get rid of BC dims
+        p[~valid_mask.bool()] = -float('inf')
+        p = softmax(p.view(-1), dim=0).view(GRID_HEIGHT, GRID_WIDTH)
+        p = torch.sum(p, axis=0)
         p = p[self.valid_actions]
-        return p, v
+        return p.numpy(), float(v.numpy())
 
 
     def copy(self):
