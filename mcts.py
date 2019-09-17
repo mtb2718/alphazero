@@ -283,7 +283,9 @@ def alphazero_train():
                 # Make one move
                 for _ in range(NUM_EXPANSIONS_PER_DECISION):
                     tree.expand(net)
-                tree = tree.traverse(np.argmax(tree.num_visits))
+                action_index = np.random.choice(len(tree.state.valid_actions), p=tree.pi(1))
+                tree = tree.traverse(action_index)
+
             print(f'Game {i} winner: Player {tree.state.winner}')
 
         update_databuffer(tree, state_buffer)
