@@ -105,15 +105,15 @@ class ConnectFourState:
 
         # Post-processing:
         # Mask invalid outputs, re-normalize, map to 0-6 int action space
-        valid_mask = torch.zeros((GRID_HEIGHT, GRID_WIDTH))
+        valid_mask = torch.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=torch.bool)
         for i in range(GRID_WIDTH):
             next_row = self._history.count(i)
             if next_row < GRID_HEIGHT:
                 valid_mask[next_row, i] = 1
 
         p = p.view(GRID_HEIGHT, GRID_WIDTH) # Get rid of BC dims
-        p[~valid_mask.bool()] = -float('inf')
-        p = softmax(p.view(-1), dim=0).view(GRID_HEIGHT, GRID_WIDTH)
+        p[valid_mask] = softmax(p[valid_mask].view(-1), dim=0)
+        p[~valid_mask] = 0
         p = torch.sum(p, axis=0)
         p = p[self.valid_actions]
         return p.numpy(), float(v.numpy())

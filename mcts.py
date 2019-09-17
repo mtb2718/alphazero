@@ -70,6 +70,20 @@ class MCTreeNode:
         Q[N == 0] = 0
         return Q
 
+    @property
+    def UCT(self):
+        # U(s, a)
+        num = self.action_prior * np.sqrt(np.sum(self.num_visits))
+        den = 1 + self.num_visits
+        return num / den
+
+
+    def pi(self, temperature):
+        assert temperature > 0
+        nt = self._edges['N'] ** (1 / temperature)
+        return nt / np.sum(nt)
+
+
     def traverse(self, action_index):
         """Construct new game state that results from taking given action and return the
         corresponding MCTreeNode in the search tree.
@@ -84,71 +98,57 @@ class MCTreeNode:
             self._children[action_index] = new_node
         return self._children[action_index]
 
-    def expand(self, turn, p, v):
-        """Evaluate policy and value of this node's state with the given model.
-        
-        Update the internally tracked values in the node and backup results in tree.
-        """
-        assert not self._expanded, "Multiple MCTreeNode expandsions is undefined."
-        self._expanded = True
-        #print(f"Expanding state: {self.state._history}")
-        #print(f"  Turn: {turn}")
-        #print(f"  P: {p}")
-        #print(f"  v: {v}")
 
+    def expand(self, net, c_puct=0.001, epsilon=0.25, alpha=0.5, maxdepth=200):
+        """Expand the tree rooted at this node."""
+
+        node = self
+        v = None
+
+        # Traverse tree to find leaf, taking caution to avoid infinite loops
+        for _ in range(maxdepth):
+
+            # i.   If game is over in current (simulated) state, backup result
+            # ii.  If state hasn't been visited, evaluate (v, pi) = f(s), backup result
+            # iii. Else, traverse branch of a = argmax Q(s,a) + U(s,a)
+
+            if node.state.winner is not None:
+                v = 0 if node.state.winner == -1 else 1
+                break
+            elif not node._expanded:
+                # TODO: Enqueue and block for results
+                p, v = node.state.eval(net)
+                node._edges['P'] = p
+                node._expanded = True
+                break
+
+            Q = node.action_prior
+            if node == self:
+                eta = np.random.dirichlet([alpha] * len(Q))
+                Q = (1 - epsilon) * Q + epsilon * eta
+            action_index = np.argmax(Q + c_puct * node.UCT)
+            node = node.traverse(action_index)
+
+        # Search terminated early
+        if v is None:
+            print('WARNING: search tree expansion terminated early.')
+            return
+
+        # Backup results
         # Assume each player acts optimally, so that our action prior and state value
         # is always from the point-of-view of whoever's turn it is. However, (for a
         # two player game), we need to reverse the sign of the value in each backup
-        # step working back towards the root of the tree. Intuitively, a strong position
+        # step working towards the root of the tree. Intuitively, a strong position
         # for the current player implies weakness in the opponents prior position.
-
-        self._edges['P'] = p
         self._value = v
-
-        node = self
         while node.parent is not None:
-            v *= -1 # Reverse sign of value for each successive parent
-            prev_action = node.parent.children.index(node)
-            node.parent._edges['W'][prev_action] += v
-            node.parent._edges['N'][prev_action] += 1
+            v *= -1
+            prev_action_index = node.parent.children.index(node)
+            node.parent._edges['W'][prev_action_index] += v
+            node.parent._edges['N'][prev_action_index] += 1
             node = node.parent
 
 
-def mcts_expand(root, net, c_puct=0.001):
-    """Expand the tree from the given 'root' node.
-
-    In other words, add one MCTreeNode to the tree originating at 'root',
-    where the added nodes are selected via MCTS upper-confidence bound. TODO: clarify.
-
-    # TODO: Combine with MCTreeNode.expand method?
-    """
-    #       i.   If game is over in current (simulated) state, backup result
-    #       ii.  If state hasn't been visited, evaluate (v, pi) = f(s), backup result
-    #       iii. Else, traverse branch of a = argmax U(s,a)
-
-    node = root
-
-    while True:
-
-        if not node.expanded:
-            if node.state.winner is not None:
-                p = node.action_prior
-                v = 0 if node.state.winner == -1 else 1
-            else:
-                # TODO: Enqueue and block for results
-                p, v = node.state.eval(net)
-            node.expand(root.state.turn, p, v)
-            break
-
-        elif node.state.winner is not None:
-            # Traversed tree to terminal state, nothing to do.
-            break
-
-        else:
-            # TODO: Move this calculation to a TreeNode method
-            U = c_puct * node.action_prior * np.sqrt(np.sum(node.num_visits)) / (1 + node.num_visits)
-            i = np.argmax(node.mean_value + U)
-            node = node.traverse(i)
 
 
 def update_databuffer(leaf, state_buffer):
@@ -282,7 +282,7 @@ def alphazero_train():
             while tree.state.winner is None:
                 # Make one move
                 for _ in range(NUM_EXPANSIONS_PER_DECISION):
-                    mcts_expand(tree, net)
+                    tree.expand(net)
                 tree = tree.traverse(np.argmax(tree.num_visits))
             print(f'Game {i} winner: Player {tree.state.winner}')
 
