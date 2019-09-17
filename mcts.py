@@ -83,6 +83,12 @@ class MCTreeNode:
         nt = self._edges['N'] ** (1 / temperature)
         return nt / np.sum(nt)
 
+    def kill_siblings(self):
+        if self._parent is None:
+            return
+        for i, sibling in enumerate(self._parent.children):
+            if sibling != self:
+                self._parent._children[i] = None
 
     def traverse(self, action_index):
         """Construct new game state that results from taking given action and return the
@@ -285,6 +291,7 @@ def alphazero_train():
                     tree.expand(net)
                 action_index = np.random.choice(len(tree.state.valid_actions), p=tree.pi(1))
                 tree = tree.traverse(action_index)
+                tree.kill_siblings()
 
             print(f'Game {i} winner: Player {tree.state.winner}')
 
