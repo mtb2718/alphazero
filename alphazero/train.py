@@ -10,7 +10,7 @@ from connectfour import AlphaC4, ConnectFourState
 from mcts import MCTreeNode
 
 
-def update_databuffer(leaf, state_buffer):
+def update_databuffer(leaf, state_buffer, summary_writer):
     # Assign value of leaf state and parents based on outcome of game.
     # 0 for draw, otherwise assume all leaf states corresponding to current player winning.
     # TODO: Add support for multiplayer games (Blokus)
@@ -20,14 +20,12 @@ def update_databuffer(leaf, state_buffer):
     MAX_BUFFER_SIZE = 64 * 1024
 
     # Fill state buffer with (node, value, action distribution)
+    # Implicit assumption is that leaf node is state after winning move (or draw) of current player
     node = leaf
 
     while node is not None:
         total_num_visits = np.sum(node.num_visits)
-        if total_num_visits > 0:
-            action_distribution = node.num_visits / total_num_visits
-        else:
-            action_distribution = None
+        action_distribution = node.pi() if total_num_visits > 0 else None
         state_buffer.append((node.state, value, action_distribution))
         value *= -1
         node = node.parent
@@ -36,7 +34,7 @@ def update_databuffer(leaf, state_buffer):
     print(f'Updated buffer, now contains {len(state_buffer)} states')
 
 
-def update_network(net, optimizer, state_buffer, game_iter):
+def update_network(net, optimizer, state_buffer, train_iter, summary_writer):
 
     # 1. sample a batch from state_buffer
     # 2. do a forward pass
@@ -94,13 +92,23 @@ def update_network(net, optimizer, state_buffer, game_iter):
     p_hat *= valid_action_mask
 
     # Calculate loss
+    # Value estimate
     l_v = ((z - v_hat) ** 2).view(B)
-    logp_hat = log_softmax(p_hat.view(B, -1), dim=1)
-    l_p = torch.sum(p.view(B, -1) * logp_hat, dim=1)
-    l_p[~p_valid] = 0.0
+    value_loss = torch.mean(l_v)
 
-    total_loss = torch.sum(l_v + l_p)
-    print(f'Total loss: {total_loss}, vloss: {torch.sum(l_v)}, ploss: {torch.sum(l_p)}')
+    # Prior policy
+    p = p.view(B, -1)[p_valid]
+    p_hat = p_hat.view(B, -1)[p_valid]
+    logp_hat = log_softmax(p_hat, dim=1)
+    l_p = -torch.sum(p * logp_hat, dim=1)
+    prior_loss = torch.mean(l_p)
+
+    total_loss = value_loss + prior_loss
+    print(f'Total loss: {total_loss}, vloss: {value_loss}, ploss: {prior_loss}')
+
+    summary_writer.add_scalar('total_loss', total_loss, train_iter)
+    summary_writer.add_scalar('value loss', value_loss, train_iter)
+    summary_writer.add_scalar('prior loss', prior_loss, train_iter)
 
     optimizer.zero_grad()
     total_loss.backward()
@@ -149,8 +157,8 @@ def alphazero_train(summary_writer):
 
             print(f'Game {train_iter} winner: Player {tree.state.winner}')
 
-        update_databuffer(tree, state_buffer)
-        update_network(net, optimizer, state_buffer, train_iter)
+        update_databuffer(tree, state_buffer, summary_writer)
+        update_network(net, optimizer, state_buffer, train_iter, summary_writer)
 
 
 if __name__ == '__main__':
@@ -168,4 +176,5 @@ if __name__ == '__main__':
  
     summary_writer = SummaryWriter(log_dir=args.outdir)
     alphazero_train(summary_writer)
+    summary_writer.close()
     print("Done.")

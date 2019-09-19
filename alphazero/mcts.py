@@ -66,7 +66,7 @@ class MCTreeNode:
         den = 1 + self.num_visits
         return num / den
 
-    def pi(self, temperature):
+    def pi(self, temperature=1):
         assert temperature > 0
         nt = self._edges['N'] ** (1 / temperature)
         return nt / np.sum(nt)
@@ -79,12 +79,9 @@ class MCTreeNode:
                 self._parent._children[i] = None
 
     def traverse(self, action_index):
-        """Construct new game state that results from taking given action and return the
-        corresponding MCTreeNode in the search tree.
+        """Construct new game state that results from taking given action.
+        Return the corresponding MCTreeNode in the search tree.
         """
-
-        # TODO: This method should return the tree's new root and discard all dead paths
-        # Should also invert all 'values' in tree to reflect new current player
         if self._children[action_index] is None:
             new_state = self.state.copy()
             new_state.take_action(action_index)
@@ -102,7 +99,7 @@ class MCTreeNode:
         for _ in range(maxdepth):
 
             # i.   If game is over in current (simulated) state, backup result
-            # ii.  If state hasn't been visited, evaluate (v, pi) = f(s), backup result
+            # ii.  If state hasn't been visited, evaluate (v, p) = f(s), backup result
             # iii. Else, traverse branch of a = argmax Q(s,a) + U(s,a)
 
             if node.state.winner is not None:
