@@ -42,7 +42,7 @@ def update_network(net, optimizer, state_buffer, train_iter, summary_writer):
     # 4. evaluate loss, do .backward()
     # 5. save results, checkpoints
 
-    B = 64
+    B = 128
 
     # Don't update network unless we can make a full batch
     if len(state_buffer) < B:
@@ -104,7 +104,6 @@ def update_network(net, optimizer, state_buffer, train_iter, summary_writer):
     prior_loss = torch.mean(l_p)
 
     total_loss = value_loss + prior_loss
-    print(f'Total loss: {total_loss}, vloss: {value_loss}, ploss: {prior_loss}')
 
     summary_writer.add_scalar('total_loss', total_loss, train_iter)
     summary_writer.add_scalar('value loss', value_loss, train_iter)
@@ -115,10 +114,6 @@ def update_network(net, optimizer, state_buffer, train_iter, summary_writer):
     optimizer.step()
 
 
-
-# TODO: MCTS should be a utility
-# Two main functions are to "play" or "simulate" and training
-# Could run in parallel or in a single thread as below
 def alphazero_train(summary_writer):
     # Until converged:
     # 0. Start new game
@@ -127,7 +122,7 @@ def alphazero_train(summary_writer):
     #       i.   If game is over in current (simulated) state, backup result
     #       ii.  If state hasn't been visited, evaluate (v, pi) = f(s), backup result
     #       iii. Else, traverse branch of a = argmax U(s,a)
-    #    b. Sample move from the state's UCB posterior
+    #    b. Sample move from the state's UCT posterior
     #    c. Update search tree root to reflect new game state
     # 2. Annotate and push game states from game into length B buffer
     # 3. Train network for N batches of K game states
@@ -138,9 +133,8 @@ def alphazero_train(summary_writer):
 
     NUM_EXPANSIONS_PER_DECISION = 16
 
-    #while True: # TODO: check for convergence
     train_iter = 0
-    for _ in range(100):
+    for _ in range(200):
         train_iter += 1
 
         tree = MCTreeNode(ConnectFourState())
@@ -151,6 +145,9 @@ def alphazero_train(summary_writer):
                 # Make one move
                 for _ in range(NUM_EXPANSIONS_PER_DECISION):
                     tree.expand(net)
+
+                # TODO: Keep track of duration of game, set temperature -> 0 after N moves
+                # ^^ From "Self-play" section of AlphaGoZero, double check for this in AlphaZero
                 action_index = np.random.choice(len(tree.state.valid_actions), p=tree.pi(1))
                 tree = tree.traverse(action_index)
                 tree.kill_siblings()
@@ -159,6 +156,15 @@ def alphazero_train(summary_writer):
 
         update_databuffer(tree, state_buffer, summary_writer)
         update_network(net, optimizer, state_buffer, train_iter, summary_writer)
+
+        # Checkpoint every 50 models
+        if train_iter % 2 == 0:
+            torch.save({
+                'train_iter': train_iter,
+                'model_state_dict': net.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                # TODO: state_buffer state
+            }, f'{summary_writer.get_logdir()}/ckpt.{train_iter}.pt')
 
 
 if __name__ == '__main__':
@@ -173,7 +179,7 @@ if __name__ == '__main__':
 
     if args.debug:
         torch.autograd.set_detect_anomaly(True)
- 
+
     summary_writer = SummaryWriter(log_dir=args.outdir)
     alphazero_train(summary_writer)
     summary_writer.close()

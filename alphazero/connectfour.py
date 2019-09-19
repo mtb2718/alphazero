@@ -180,39 +180,3 @@ class ConnectFourState:
             s += rowstr + '\n'
         s += ' ' + ' '.join([str(i) for i in range(GRID_WIDTH)])
         return s
-
-
-if __name__ == '__main__':
-    s = ConnectFourState()
-    states = [s]
-    print(s)
-    while s.winner is None:
-        a = input(f'(Player {s.turn}) Take Action [0-{GRID_WIDTH - 1}, (u)ndo, (q)uit], (d)ebug: ')
-        if a == 'q':
-            exit(0)
-        elif a == 'u':
-            if len(states) > 1:
-                s = states[-2]
-                states = states[:-1]
-        elif a == 'd':
-            import pdb
-            pdb.set_trace()
-            continue
-        elif int(a) in s.valid_actions:
-            s = s.copy()
-            if s.move(int(a)):
-                states.append(s)
-            else:
-                print('Invalid move.')
-                continue
-        else:
-            print('Invalid Selection.')
-            continue
-        print(s)
-        if s.winner is None:
-            continue
-        elif s.winner >= 0:
-            print(f'Player {s.winner} wins!')
-        else:
-            print('Tie!')
-        exit(0)
