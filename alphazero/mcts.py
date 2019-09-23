@@ -89,7 +89,7 @@ class MCTreeNode:
             self._children[action_index] = new_node
         return self._children[action_index]
 
-    def expand(self, net, c_puct=0.001, epsilon=0.25, alpha=0.5, maxdepth=200):
+    def expand(self, net, c_puct=0.001, epsilon=0.25, alpha=1, maxdepth=200):
         """Expand the tree rooted at this node."""
 
         node = self

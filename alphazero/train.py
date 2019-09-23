@@ -6,7 +6,7 @@ from torch.nn.functional import log_softmax
 from torch.optim import SGD
 from torch.utils.tensorboard import SummaryWriter
 
-from connectfour import AlphaC4, ConnectFourState
+from connectfour import AlphaZeroC4, ConnectFourState
 from mcts import MCTreeNode
 
 
@@ -54,8 +54,8 @@ def update_network(net, optimizer, state_buffer, train_iter, summary_writer):
     # Should maybe also make use of datasets / dataworkers
 
     x = torch.zeros(B, 2, 6, 7)
-    z = torch.zeros(B, 1, 1, 1)
     p = torch.zeros(B, 1, 6, 7)
+    z = torch.zeros(B, 1)
     p_valid = torch.ones(B, dtype=torch.bool)
     valid_action_mask = torch.zeros(B, 1, 6, 7)
 
@@ -93,7 +93,7 @@ def update_network(net, optimizer, state_buffer, train_iter, summary_writer):
 
     # Calculate loss
     # Value estimate
-    l_v = ((z - v_hat) ** 2).view(B)
+    l_v = 0.01 * ((z - v_hat) ** 2).view(B)
     value_loss = torch.mean(l_v)
 
     # Prior policy
@@ -127,14 +127,14 @@ def alphazero_train(summary_writer):
     # 2. Annotate and push game states from game into length B buffer
     # 3. Train network for N batches of K game states
 
-    net = AlphaC4()
-    optimizer = SGD(net.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4)
+    net = AlphaZeroC4()
+    optimizer = SGD(net.parameters(), lr=0.2, momentum=0.9, weight_decay=1e-4)
     state_buffer = [] # TODO: more fancy
 
-    NUM_EXPANSIONS_PER_DECISION = 16
+    NUM_EXPANSIONS_PER_DECISION = 64
 
     train_iter = 0
-    for _ in range(200):
+    for _ in range(10000):
         train_iter += 1
 
         tree = MCTreeNode(ConnectFourState())
@@ -158,7 +158,7 @@ def alphazero_train(summary_writer):
         update_network(net, optimizer, state_buffer, train_iter, summary_writer)
 
         # Checkpoint every 50 models
-        if train_iter % 2 == 0:
+        if train_iter % 50 == 0:
             torch.save({
                 'train_iter': train_iter,
                 'model_state_dict': net.state_dict(),

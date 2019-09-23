@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 import numpy as np
 import torch
 
-from connectfour import AlphaC4, ConnectFourState, GRID_WIDTH
+from connectfour import AlphaZeroC4, ConnectFourState, GRID_WIDTH
 from mcts import MCTreeNode
 
 
@@ -31,16 +31,19 @@ class HumanPlayer(Player):
 
 
 class AlphaZeroPlayer(Player):
-    def __init__(self, model):
+    def __init__(self, model, debug=False):
         super(AlphaZeroPlayer, self).__init__()
         self._model = model
+        self._debug = debug
 
     def get_action(self, state):
         # TODO: Could keep accumulating expanded nodes throughout game
         # This should make AI much stronger
+        if self._debug:
+            print(state)
         node = MCTreeNode(state)
         with torch.no_grad():
-            for _ in range(16):
+            for _ in range(1024):
                 node.expand(self._model)
         action_index = np.argmax(node.pi())
         return action_index, None
@@ -79,14 +82,16 @@ def play(state, players, current_player=0):
         if state.winner is None:
             continue
         elif state.winner >= 0:
+            print(state)
             print(f'Player {state.winner} wins!')
         else:
+            print(state)
             print('Game drawn!')
         break
 
 
 def load_ckpt(ckpt):
-    model = AlphaC4()
+    model = AlphaZeroC4()
     checkpoint = torch.load(ckpt)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
@@ -107,4 +112,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     model = load_ckpt(args.ckpt)
-    play(ConnectFourState(), [HumanPlayer(), AlphaZeroPlayer(model)])
+    play(ConnectFourState(), [
+        AlphaZeroPlayer(model, True),
+        #AlphaZeroPlayer(model, True),
+        HumanPlayer(),
+    ])

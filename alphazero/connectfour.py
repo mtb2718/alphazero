@@ -5,58 +5,19 @@ from torch.nn.functional import softmax
 import numpy as np
 from scipy.signal import convolve2d
 
+from models import AlphaZero
+
 
 GRID_WIDTH = 7
 GRID_HEIGHT = 6
 
 
-class AlphaC4(torch.nn.Module):
-
+class AlphaZeroC4(AlphaZero):
     def __init__(self):
-        super(AlphaC4, self).__init__()
-        self._backbone = torch.nn.Sequential(
-            torch.nn.Conv2d(2, 64, (3, 3), padding=1, stride=1, bias=False),
-            torch.nn.BatchNorm2d(64),
-            torch.nn.ReLU(True),
-            torch.nn.Conv2d(64, 32, (3, 3), padding=1, stride=1, bias=False),
-            torch.nn.BatchNorm2d(32),
-            torch.nn.ReLU(True),
-            torch.nn.Conv2d(32, 32, (3, 3), padding=1, stride=1, bias=False),
-            torch.nn.BatchNorm2d(32),
-            torch.nn.ReLU(True),
-            torch.nn.Conv2d(32, 32, (3, 3), padding=1, stride=1, bias=False),
-            torch.nn.BatchNorm2d(32),
-            torch.nn.ReLU(True),
-            torch.nn.Conv2d(32, 32, (3, 3), padding=1, stride=1, bias=False),
-            torch.nn.BatchNorm2d(32),
-            torch.nn.ReLU(True),
-            torch.nn.Conv2d(32, 32, (3, 3), padding=1, stride=1, bias=False),
-            torch.nn.BatchNorm2d(32),
-            torch.nn.ReLU(True),
-        )
-
-        self._policy_head = torch.nn.Sequential(
-            torch.nn.Conv2d(32, 2, (1, 1)),
-            torch.nn.BatchNorm2d(2),
-            torch.nn.ReLU(True),
-            torch.nn.Conv2d(2, 6 * 7, (6, 7), padding=0, stride=1, bias=True),
-        )
-
-        self._value_head = torch.nn.Sequential(
-            torch.nn.Conv2d(32, 1, (1, 1), bias=False),
-            torch.nn.BatchNorm2d(1),
-            torch.nn.ReLU(True),
-            torch.nn.Conv2d(1, 256, (6, 7), padding=0, stride=1, bias=True),
-            torch.nn.ReLU(True),
-            torch.nn.Conv2d(256, 1, (1, 1), padding=0, stride=1, bias=True),
-            torch.nn.Tanh(),
-        )
-
-    def forward(self, board):
-        feat = self._backbone(board)
-        p = self._policy_head(feat).reshape(-1, 1, GRID_HEIGHT, GRID_WIDTH)
-        v = self._value_head(feat)
-        return p, v
+        super(AlphaZeroC4, self).__init__(shape_in=(2, GRID_HEIGHT, GRID_WIDTH),
+                                          shape_out=(1, GRID_HEIGHT, GRID_WIDTH),
+                                          num_blocks=8,
+                                          block_channels=64)
 
 
 class ConnectFourState:
@@ -154,8 +115,6 @@ class ConnectFourState:
         board = self.board
         for p, h in product([0, 1], [h0, h1, h2, h3]):
             if np.any(convolve2d(board[p], h, 'valid') > 3):
-                if winner is not None and winner != p:
-                    import pdb; pdb.set_trace()
                 assert winner is None or winner == p, 'Game cannot have multiple winners.'
                 winner = p
 
