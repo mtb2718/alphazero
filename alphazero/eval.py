@@ -11,23 +11,34 @@ class Player:
     # TODO: ABC
     def __init__(self):
         pass
+    def set_game_state(self, state):
+        pass
     def get_action(self):
+        pass
+    def observe_action(self, action_index, new_state):
         pass
 
 
 class HumanPlayer(Player):
     def __init__(self):
         super(HumanPlayer, self).__init__()
+        self._state = None
 
-    def get_action(self, state):
-        print(state)
-        a = input(f'(Player {state.turn}) Take Action [0-{GRID_WIDTH - 1}, (u)ndo, (q)uit], (d)ebug: ')
+    def set_game_state(self, state):
+        self._state = state
+
+    def get_action(self):
+        print(self._state)
+        a = input(f'(Player {self._state.turn}) Take Action [0-{GRID_WIDTH - 1}, (u)ndo, (q)uit], (d)ebug: ')
         try:
             action = int(a)
-            action_index = state.valid_actions.index(action)
+            action_index = self._state.valid_actions.index(action)
             return action_index, None
         except:
             return None, a
+
+    def observe_action(self, action_index, new_state):
+        self._state = new_state
 
 
 class AlphaZeroPlayer(Player):
@@ -35,42 +46,56 @@ class AlphaZeroPlayer(Player):
         super(AlphaZeroPlayer, self).__init__()
         self._model = model
         self._debug = debug
+        self._search_tree = None
 
-    def get_action(self, state):
-        # TODO: Could keep accumulating expanded nodes throughout game
-        # This should make AI much stronger
+    def set_game_state(self, state):
+        self._search_tree = MCTreeNode(state)
+
+    def get_action(self):
         if self._debug:
-            print(state)
-        node = MCTreeNode(state)
+            print(self._search_tree.state)
         with torch.no_grad():
             for _ in range(1024):
-                node.expand(self._model)
-        action_index = np.argmax(node.pi())
+                self._search_tree.expand(self._model)
+        if self._debug:
+        action_index = np.argmax(self._search_tree.pi())
+        self._search_tree = self._search_tree.traverse(action_index)
+        self._search_tree.kill_siblings()
         return action_index, None
 
+    def observe_action(self, action_index, new_state):
+        self._search_tree = self._search_tree.traverse(action_index)
+        self._search_tree.kill_siblings()
 
-def play(state, players, current_player=0):
+
+def play(state, players, current_player_index=0):
     """Play game from given state with given players."""
 
     states = [state]
+    for player in players:
+        player.set_game_state(state.copy())
+
     while True:
 
-        player = players[current_player]
-        action_index, game_control = player.get_action(state)
+        player = players[current_player_index]
+        action_index, game_control = player.get_action()
 
         if game_control is None:
             assert action_index >= 0 and action_index < len(state.valid_actions)
             state = state.copy()
             state.take_action(action_index)
             states.append(state)
-            current_player = (current_player + 1) % len(players)
+            for p in players:
+                if p != player:
+                    p.observe_action(action_index, state.copy())
+            current_player_index = (current_player_index + 1) % len(players)
         elif game_control == 'q':
             exit(0)
         elif game_control == 'u':
             if len(states) > 1:
                 state = states[-2]
                 states = states[:-1]
-                current_player = (current_player - 1) % len(players)
+                current_player_index = (current_player_index - 1) % len(players)
         elif game_control == 'd':
             import pdb
             pdb.set_trace()
@@ -81,12 +106,12 @@ def play(state, players, current_player=0):
 
         if state.winner is None:
             continue
-        elif state.winner >= 0:
-            print(state)
-            print(f'Player {state.winner} wins!')
         else:
             print(state)
-            print('Game drawn!')
+            if state.winner >= 0:
+                print(f'Player {state.winner} wins!')
+            else:
+                print('Game drawn!')
         break
 
 
