@@ -93,7 +93,7 @@ def update_network(net, optimizer, state_buffer, train_iter, summary_writer):
 
     # Calculate loss
     # Value estimate
-    l_v = 0.01 * ((z - v_hat) ** 2).view(B)
+    l_v = ((z - v_hat) ** 2).view(B)
     value_loss = torch.mean(l_v)
 
     # Prior policy
@@ -129,36 +129,42 @@ def alphazero_train(summary_writer):
 
     net = AlphaZeroC4()
     optimizer = SGD(net.parameters(), lr=0.2, momentum=0.9, weight_decay=1e-4)
+    # TODO: Learning rate schedule
     state_buffer = [] # TODO: more fancy
 
     NUM_EXPANSIONS_PER_DECISION = 64
+    EXPLORATION_DEPTH = 16
 
     train_iter = 0
-    for _ in range(10000):
+    for _ in range(50000):
         train_iter += 1
 
         tree = MCTreeNode(ConnectFourState())
 
         with torch.no_grad():
             # Play one game
+            turn_num = 0
             while tree.state.winner is None:
                 # Make one move
                 for _ in range(NUM_EXPANSIONS_PER_DECISION):
                     tree.expand(net)
 
-                # TODO: Keep track of duration of game, set temperature -> 0 after N moves
-                # ^^ From "Self-play" section of AlphaGoZero, double check for this in AlphaZero
-                action_index = np.random.choice(len(tree.state.valid_actions), p=tree.pi(1))
+                # Keep track of duration of game, set temperature -> 0 after N moves
+                # See "Self-play" section of AlphaGoZero.
+                # TODO: double check for this in AlphaZero.
+                tau = 1 if turn_num < EXPLORATION_DEPTH else 0.01
+                action_index = np.random.choice(len(tree.state.valid_actions), p=tree.pi(tau))
                 tree = tree.traverse(action_index)
                 tree.kill_siblings()
+                turn_num += 1
 
-            print(f'Game {train_iter} winner: Player {tree.state.winner}')
+            print(f'Player {tree.state.winner} wins game {train_iter} after {turn_num} turns')
 
         update_databuffer(tree, state_buffer, summary_writer)
         update_network(net, optimizer, state_buffer, train_iter, summary_writer)
 
-        # Checkpoint every 50 models
-        if train_iter % 50 == 0:
+        # Checkpoint every 100 models
+        if train_iter % 100 == 0:
             torch.save({
                 'train_iter': train_iter,
                 'model_state_dict': net.state_dict(),

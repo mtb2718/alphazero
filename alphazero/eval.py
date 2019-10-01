@@ -58,6 +58,8 @@ class AlphaZeroPlayer(Player):
             for _ in range(1024):
                 self._search_tree.expand(self._model)
         if self._debug:
+            print(f'Num visits:   {self._search_tree.num_visits}')
+            print(f'Action Prior: {self._search_tree.action_prior}')
         action_index = np.argmax(self._search_tree.pi())
         self._search_tree = self._search_tree.traverse(action_index)
         self._search_tree.kill_siblings()

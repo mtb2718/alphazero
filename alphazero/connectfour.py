@@ -16,7 +16,7 @@ class AlphaZeroC4(AlphaZero):
     def __init__(self):
         super(AlphaZeroC4, self).__init__(shape_in=(2, GRID_HEIGHT, GRID_WIDTH),
                                           shape_out=(1, GRID_HEIGHT, GRID_WIDTH),
-                                          num_blocks=8,
+                                          num_blocks=12,
                                           block_channels=64)
 
 

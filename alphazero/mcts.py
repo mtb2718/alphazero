@@ -59,13 +59,6 @@ class MCTreeNode:
         Q[N == 0] = 0
         return Q
 
-    @property
-    def UCT(self):
-        # U(s, a)
-        num = self.action_prior * np.sqrt(np.sum(self.num_visits))
-        den = 1 + self.num_visits
-        return num / den
-
     def pi(self, temperature=1):
         assert temperature > 0
         nt = self._edges['N'] ** (1 / temperature)
@@ -89,7 +82,7 @@ class MCTreeNode:
             self._children[action_index] = new_node
         return self._children[action_index]
 
-    def expand(self, net, c_puct=0.001, epsilon=0.25, alpha=1, maxdepth=200):
+    def expand(self, net, c_puct=1.0, epsilon=0.25, alpha=0.8, maxdepth=200):
         """Expand the tree rooted at this node."""
 
         node = self
@@ -112,11 +105,15 @@ class MCTreeNode:
                 node._expanded = True
                 break
 
-            Q = node.action_prior
+            # TODO: Utility function for evaluating UCT?
+            Q = node.mean_value
+            P = node.action_prior
             if node == self:
-                eta = np.random.dirichlet([alpha] * len(Q))
-                Q = (1 - epsilon) * Q + epsilon * eta
-            action_index = np.argmax(Q + c_puct * node.UCT)
+                eta = np.random.dirichlet([alpha] * len(P))
+                P = (1 - epsilon) * P + epsilon * eta
+            s = np.sqrt(np.sum(node.num_visits)) / (1 + node.num_visits)
+            U = c_puct * P * s
+            action_index = np.argmax(Q + U)
             node = node.traverse(action_index)
 
         # Search terminated early
