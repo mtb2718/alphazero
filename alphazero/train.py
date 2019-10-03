@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from torch.nn.functional import log_softmax
 from torch.optim import SGD
+from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.tensorboard import SummaryWriter
 
 from connectfour import AlphaZeroC4, ConnectFourState
@@ -34,7 +35,7 @@ def update_databuffer(leaf, state_buffer, summary_writer):
     print(f'Updated buffer, now contains {len(state_buffer)} states')
 
 
-def update_network(net, optimizer, state_buffer, train_iter, summary_writer):
+def update_network(net, optimizer, lr_schedule, state_buffer, train_iter, summary_writer):
 
     # 1. sample a batch from state_buffer
     # 2. do a forward pass
@@ -105,13 +106,15 @@ def update_network(net, optimizer, state_buffer, train_iter, summary_writer):
 
     total_loss = value_loss + prior_loss
 
-    summary_writer.add_scalar('total_loss', total_loss, train_iter)
-    summary_writer.add_scalar('value loss', value_loss, train_iter)
-    summary_writer.add_scalar('prior loss', prior_loss, train_iter)
-
     optimizer.zero_grad()
     total_loss.backward()
     optimizer.step()
+    lr_schedule.step()
+
+    summary_writer.add_scalar('total_loss', total_loss, train_iter)
+    summary_writer.add_scalar('value_loss', value_loss, train_iter)
+    summary_writer.add_scalar('prior_loss', prior_loss, train_iter)
+    summary_writer.add_scalar('learning_rate', lr_schedule.get_lr()[0], train_iter)
 
 
 def alphazero_train(summary_writer):
@@ -129,11 +132,11 @@ def alphazero_train(summary_writer):
 
     net = AlphaZeroC4()
     optimizer = SGD(net.parameters(), lr=0.2, momentum=0.9, weight_decay=1e-4)
-    # TODO: Learning rate schedule
+    lr_schedule = MultiStepLR(optimizer, [1000, 2000, 4000], gamma=0.1)
     state_buffer = [] # TODO: more fancy
 
     NUM_EXPANSIONS_PER_DECISION = 64
-    EXPLORATION_DEPTH = 16
+    EXPLORATION_DEPTH = 10
 
     train_iter = 0
     for _ in range(50000):
@@ -161,7 +164,7 @@ def alphazero_train(summary_writer):
             print(f'Player {tree.state.winner} wins game {train_iter} after {turn_num} turns')
 
         update_databuffer(tree, state_buffer, summary_writer)
-        update_network(net, optimizer, state_buffer, train_iter, summary_writer)
+        update_network(net, optimizer, lr_schedule, state_buffer, train_iter, summary_writer)
 
         # Checkpoint every 100 models
         if train_iter % 100 == 0:
