@@ -144,6 +144,7 @@ def alphazero_train(summary_writer):
 
         tree = MCTreeNode(ConnectFourState())
 
+        # Move to "run_simulation()"
         with torch.no_grad():
             # Play one game
             turn_num = 0

@@ -54,7 +54,7 @@ class MCTreeNode:
         # Q(s, a)
         W = self._edges['W']
         N = self._edges['N']
-        Q = W
+        Q = W.copy()
         Q[N != 0] /= N[N != 0]
         Q[N == 0] = 0
         return Q
@@ -82,7 +82,7 @@ class MCTreeNode:
             self._children[action_index] = new_node
         return self._children[action_index]
 
-    def expand(self, net, c_puct=1.0, epsilon=0.25, alpha=0.8, maxdepth=200):
+    def expand(self, net, c_base=19652, c_init=1.25, epsilon=0.25, alpha=0.8, maxdepth=200):
         """Expand the tree rooted at this node."""
 
         node = self
@@ -111,8 +111,10 @@ class MCTreeNode:
             if node == self:
                 eta = np.random.dirichlet([alpha] * len(P))
                 P = (1 - epsilon) * P + epsilon * eta
-            s = np.sqrt(np.sum(node.num_visits)) / (1 + node.num_visits)
-            U = c_puct * P * s
+            Ns = np.sum(node.num_visits)
+            Cs = np.log((1 + Ns + c_base) / c_base) + c_init
+            s = np.sqrt(Ns) / (1 + node.num_visits)
+            U = Cs * P * s
             action_index = np.argmax(Q + U)
             node = node.traverse(action_index)
 
@@ -126,7 +128,7 @@ class MCTreeNode:
         # is always from the point-of-view of whoever's turn it is. However, (for a
         # two player game), we need to reverse the sign of the value in each backup
         # step working towards the root of the tree. Intuitively, a strong position
-        # for the current player implies weakness in the opponents prior position.
+        # for the current player implies weakness in the opponent's prior position.
         self._value = v
         while node.parent is not None:
             v *= -1
