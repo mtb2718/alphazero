@@ -156,8 +156,11 @@ def alphazero_train(summary_writer):
                 # Keep track of duration of game, set temperature -> 0 after N moves
                 # See "Self-play" section of AlphaGoZero.
                 # TODO: double check for this in AlphaZero.
-                tau = 1 if turn_num < EXPLORATION_DEPTH else 0.01
-                action_index = np.random.choice(len(tree.state.valid_actions), p=tree.pi(tau))
+                pi = tree.pi()
+                if turn_num < EXPLORATION_DEPTH:
+                    action_index = np.random.choice(len(pi), p=pi)
+                else:
+                    action_index = np.argmax(pi)
                 tree = tree.traverse(action_index)
                 tree.kill_siblings()
                 turn_num += 1
