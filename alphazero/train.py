@@ -138,9 +138,10 @@ def alphazero_train(summary_writer):
     NUM_EXPANSIONS_PER_DECISION = 64
     EXPLORATION_DEPTH = 10
 
+    selfplay_iter = 0
     train_iter = 0
     for _ in range(50000):
-        train_iter += 1
+        selfplay_iter += 1
 
         tree = MCTreeNode(ConnectFourState())
 
@@ -165,10 +166,13 @@ def alphazero_train(summary_writer):
                 tree.kill_siblings()
                 turn_num += 1
 
-            print(f'Player {tree.state.winner} wins game {train_iter} after {turn_num} turns')
+            print(f'Player {tree.state.winner} ({train_iter}) wins game {selfplay_iter} after {turn_num} turns')
 
         update_databuffer(tree, state_buffer, summary_writer)
-        update_network(net, optimizer, lr_schedule, state_buffer, train_iter, summary_writer)
+
+        if selfplay_iter > 0 and selfplay_iter % 10 == 0:
+            train_iter += 1
+            update_network(net, optimizer, lr_schedule, state_buffer, train_iter, summary_writer)
 
         # Checkpoint every 100 models
         if train_iter % 100 == 0:
