@@ -17,7 +17,7 @@ class AlphaZeroC4(AlphaZero):
         super(AlphaZeroC4, self).__init__(shape_in=(2, GRID_HEIGHT, GRID_WIDTH),
                                           shape_out=(1, GRID_HEIGHT, GRID_WIDTH),
                                           num_blocks=12,
-                                          block_channels=80)
+                                          block_channels=64)
 
 
 class ConnectFourState:

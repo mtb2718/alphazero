@@ -29,7 +29,7 @@ class HumanPlayer(Player):
 
     def get_action(self):
         print(self._state)
-        a = input(f'(Player {self._state.turn}) Take Action [0-{GRID_WIDTH - 1}, (u)ndo, (q)uit], (d)ebug: ')
+        a = input(f'(Player {self._state.turn}) Take Action [0-{GRID_WIDTH - 1}, (u)ndo, (q)uit, (d)ebug]: ')
         try:
             action = int(a)
             action_index = self._state.valid_actions.index(action)
@@ -141,7 +141,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     model = load_ckpt(args.ckpt)
-    play(ConnectFourState(), [
+    state = ConnectFourState()
+    play(state, [
         AlphaZeroPlayer(model, True),
         #AlphaZeroPlayer(model, True),
         HumanPlayer(),

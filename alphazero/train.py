@@ -136,7 +136,7 @@ def alphazero_train(summary_writer):
     state_buffer = [] # TODO: more fancy
 
     NUM_EXPANSIONS_PER_DECISION = 64
-    EXPLORATION_DEPTH = 10
+    EXPLORATION_DEPTH = 4
 
     selfplay_iter = 0
     train_iter = 0
@@ -170,7 +170,7 @@ def alphazero_train(summary_writer):
 
         update_databuffer(tree, state_buffer, summary_writer)
 
-        if selfplay_iter > 0 and selfplay_iter % 10 == 0:
+        if selfplay_iter > 0 and selfplay_iter % 1 == 0:
             train_iter += 1
             update_network(net, optimizer, lr_schedule, state_buffer, train_iter, summary_writer)
 
@@ -182,6 +182,7 @@ def alphazero_train(summary_writer):
                 'optimizer_state_dict': optimizer.state_dict(),
                 # TODO: state_buffer state
             }, f'{summary_writer.get_logdir()}/ckpt.{train_iter}.pt')
+
 
 
 if __name__ == '__main__':
