@@ -1,204 +1,189 @@
 from argparse import ArgumentParser
+import os
 
 import numpy as np
 import torch
-from torch.nn.functional import log_softmax
+from torch.utils.data import Dataset, DataLoader
 from torch.optim import SGD
 from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.tensorboard import SummaryWriter
 
-from connectfour import AlphaZeroC4, ConnectFourState
-from mcts import MCTreeNode
+from alphazero.config import AlphaZeroConfig
+from alphazero.models import UniformModel
+from alphazero.selfplay import SelfPlayWorker
 
 
-def update_databuffer(leaf, state_buffer, summary_writer):
-    # Assign value of leaf state and parents based on outcome of game.
-    # 0 for draw, otherwise assume all leaf states corresponding to current player winning.
-    # TODO: Add support for multiplayer games (Blokus)
-    assert leaf.state.winner is not None
-    value = 1 if leaf.state.winner >= 0 else 0
+class ReplayDataset(Dataset):
 
-    MAX_BUFFER_SIZE = 64 * 1024
+    def __init__(self, config):
+        # TODO: sqlite
+        self._config = config
+        self._buf = []
 
-    # Fill state buffer with (node, value, action distribution)
-    # Implicit assumption is that leaf node is state after winning move (or draw) of current player
-    node = leaf
+    def __getitem__(self, i):
+        history, move_index, stats = self._buf[i % len(self._buf)]
+        game = self._config.Game(history=history)
+        game_at_move = self._config.Game(history=history[:move_index])
+        x = game_at_move.render()
+        p = np.zeros(game_at_move.NUM_ACTIONS, np.float32)
+        p[game_at_move.valid_actions] = stats / np.sum(stats)
+        valid = np.zeros(game_at_move.NUM_ACTIONS, np.bool)
+        valid[game_at_move.valid_actions] = True
+        z = game.terminal_value(game_at_move.next_player)
+        z = np.array([z], dtype=np.float32)
+        return {'x': x, 'z': z, 'p': p, 'p_valid': valid}
 
-    while node is not None:
-        total_num_visits = np.sum(node.num_visits)
-        action_distribution = node.pi() if total_num_visits > 0 else None
-        state_buffer.append((node.state, value, action_distribution))
-        value *= -1
-        node = node.parent
+    def __len__(self):
+        return int(1e6)
 
-    state_buffer = state_buffer[-MAX_BUFFER_SIZE:]
-    print(f'Updated buffer, now contains {len(state_buffer)} states')
+    @property
+    def num_examples(self):
+        # TODO: unhack the actual 'len' method
+        return len(self._buf)
+
+    def save_game(self, game):
+        # Assign value of leaf state and parents based on outcome of game.
+        # 0 for draw, otherwise assume all leaf states corresponding to current player winning.
+
+        MAX_BUFFER_SIZE = 64 * 1024
+
+        assert game.terminal
+        # Note, we don't save the terminal game states in the buffer
+        L = len(game.history)
+        for i in range(L):
+            self._buf.append((game.history, i, game.search_statistics[i]))
+
+        self._buf = self._buf[-MAX_BUFFER_SIZE:]
+        print(f'Updated buffer, now contains {len(self._buf)} states')
 
 
-def update_network(net, optimizer, lr_schedule, state_buffer, train_iter, summary_writer):
+class ModelServer:
 
-    # 1. sample a batch from state_buffer
-    # 2. do a forward pass
-    # 3. post-processing for valid moves?
-    # 4. evaluate loss, do .backward()
-    # 5. save results, checkpoints
+    def __init__(self, logdir, default_model=None, ver=0, ckpt_period=50):
+        self._model = None
+        self._default_model = default_model
+        self._logdir = logdir
+        self._model_ver = ver
+        self._ckpt_period = ckpt_period
 
-    B = 128
+    def update(self, model):
+        self._model = model # TODO: shared weights in memory?
+        self._model_ver += 1
+        if self._ckpt_period > 0 and self._model_ver % self._ckpt_period == 0:
+            self.checkpoint()
 
-    # Don't update network unless we can make a full batch
-    if len(state_buffer) < B:
-        return
-
-    sample_indices = np.random.choice(len(state_buffer), B, False)
-
-    # TODO: shared code with node.eval
-    # Should maybe also make use of datasets / dataworkers
-
-    x = torch.zeros(B, 2, 6, 7)
-    p = torch.zeros(B, 1, 6, 7)
-    z = torch.zeros(B, 1)
-    p_valid = torch.ones(B, dtype=torch.bool)
-    valid_action_mask = torch.zeros(B, 1, 6, 7)
-
-    for i, s in enumerate(sample_indices):
-        state, zi, pi = state_buffer[s]
-        board = state.board
-
-        # Channel 0 always equals current player's position
-        if state.turn == 1:
-            board[[0, 1]] = board[[1, 0]]
-
-        x[i] = torch.from_numpy(board)
-        z[i] = zi
-
-        for c in range(7):
-            next_row = state._history.count(c)
-            if next_row < 6:
-                valid_action_mask[i, 0, next_row, c] = 1
-
-        # Convert pi from list of action probabilities to board representation
-        # Note we'll mask all invalid moves outside of this loop, below.
-        if pi is None:
-            # pi may be None for terminal game states, where children visit counts will be 0.
-            p_valid[i] = 0
+    def latest(self):
+        if self._model_ver > 0:
+            return self._model_ver, self._model
         else:
-            for j, ai in enumerate(state.valid_actions):
-                p[i, 0, :, ai] = pi[j]
+            return 0, self._default_model
 
-    # Run inference
-    p_hat, v_hat = net(x.float())
-
-    # Mask out invalid actions in both the prediction and the target.
-    p *= valid_action_mask
-    p_hat *= valid_action_mask
-
-    # Calculate loss
-    # Value estimate
-    l_v = ((z - v_hat) ** 2).view(B)
-    value_loss = torch.mean(l_v)
-
-    # Prior policy
-    p = p.view(B, -1)[p_valid]
-    p_hat = p_hat.view(B, -1)[p_valid]
-    logp_hat = log_softmax(p_hat, dim=1)
-    l_p = -torch.sum(p * logp_hat, dim=1)
-    prior_loss = torch.mean(l_p)
-
-    total_loss = value_loss + prior_loss
-
-    optimizer.zero_grad()
-    total_loss.backward()
-    optimizer.step()
-    lr_schedule.step()
-
-    summary_writer.add_scalar('total_loss', total_loss, train_iter)
-    summary_writer.add_scalar('value_loss', value_loss, train_iter)
-    summary_writer.add_scalar('prior_loss', prior_loss, train_iter)
-    summary_writer.add_scalar('learning_rate', lr_schedule.get_lr()[0], train_iter)
+    def checkpoint(self):
+        torch.save({
+            'train_iter': self._model_ver,
+            'model_state_dict': self._model.state_dict(),
+            # TODO: Move checkpointing outside of this cache
+            #'optimizer_state_dict': optimizer.state_dict(),
+        }, f'{self._logdir}/ckpt.{self._model_ver}.pt')
 
 
-def alphazero_train(summary_writer):
-    # Until converged:
-    # 0. Start new game
-    # 1. Until game is over:
-    #    a. Run MCTS from game state (for 800 expansions)
-    #       i.   If game is over in current (simulated) state, backup result
-    #       ii.  If state hasn't been visited, evaluate (v, pi) = f(s), backup result
-    #       iii. Else, traverse branch of a = argmax U(s,a)
-    #    b. Sample move from the state's UCT posterior
-    #    c. Update search tree root to reflect new game state
-    # 2. Annotate and push game states from game into length B buffer
-    # 3. Train network for N batches of K game states
 
-    net = AlphaZeroC4()
-    optimizer = SGD(net.parameters(), lr=0.2, momentum=0.9, weight_decay=1e-4)
-    lr_schedule = MultiStepLR(optimizer, [1000, 2000, 4000], gamma=0.1)
-    state_buffer = [] # TODO: more fancy
+class TrainWorker:
+    def __init__(self, config, model_server, dataset, outdir):
 
-    NUM_EXPANSIONS_PER_DECISION = 64
-    EXPLORATION_DEPTH = 4
+        self._config = config
+        self._model = config.Model()
+        self._model_server = model_server
+        self._loss = config.Loss()
 
-    selfplay_iter = 0
-    train_iter = 0
-    for _ in range(50000):
-        selfplay_iter += 1
+        self._optimizer = SGD(self._model.parameters(),
+                              lr=config.training['lr'],
+                              momentum=config.training['momentum'],
+                              weight_decay=config.training['weight_decay'])
+        self._lr_schedule = MultiStepLR(self._optimizer,
+                                        config.training['lr_schedule'],
+                                        gamma=config.training['lr_schedule_gamma'])
+        self._summary_writer = SummaryWriter(log_dir=outdir)
 
-        tree = MCTreeNode(ConnectFourState())
+        # TODO: setting num_workers to 1 or more requires support for concurrent dataset writes
+        # inside of save_game method, i.e. sqlite or similar
+        # TODO: Configure sampling without replacement within a single batch
+        self._dataset = dataset
+        self._dataloader = DataLoader(dataset,
+                                      batch_size=config.training['batch_size'],
+                                      shuffle=True,
+                                      num_workers=0)
+        self._batch_iter = enumerate(self._dataloader)
 
-        # Move to "run_simulation()"
-        with torch.no_grad():
-            # Play one game
-            turn_num = 0
-            while tree.state.winner is None:
-                # Make one move
-                for _ in range(NUM_EXPANSIONS_PER_DECISION):
-                    tree.expand(net)
+    def __del__(self):
+        self._summary_writer.close()
 
-                # Keep track of duration of game, set temperature -> 0 after N moves
-                # See "Self-play" section of AlphaGoZero.
-                # TODO: double check for this in AlphaZero.
-                pi = tree.pi()
-                if turn_num < EXPLORATION_DEPTH:
-                    action_index = np.random.choice(len(pi), p=pi)
-                else:
-                    action_index = np.argmax(pi)
-                tree = tree.traverse(action_index)
-                tree.kill_siblings()
-                turn_num += 1
+    def process_batch(self):
+        train_iter, batch = next(self._batch_iter)
 
-            print(f'Player {tree.state.winner} ({train_iter}) wins game {selfplay_iter} after {turn_num} turns')
+        # Don't update network unless we can make a full batch
+        BATCH_SIZE = batch['x'].shape[0]
+        N = self._dataset.num_examples
+        if N < BATCH_SIZE:
+            print(f"Skipping batch ({BATCH_SIZE}), too few examples in replay buffer ({N}).")
+            return False
 
-        update_databuffer(tree, state_buffer, summary_writer)
+        # Run inference, evaluate loss, backprop
+        self._model.train()
+        p_hat, v_hat = self._model(batch['x'], batch['p_valid'])
+        prior_loss, value_loss = self._loss(batch['p'], batch['z'], p_hat, v_hat, batch['p_valid'])
+        self._optimizer.zero_grad()
+        total_loss = prior_loss + value_loss
+        total_loss.backward()
+        self._optimizer.step()
+        self._lr_schedule.step()
 
-        if selfplay_iter > 0 and selfplay_iter % 1 == 0:
-            train_iter += 1
-            update_network(net, optimizer, lr_schedule, state_buffer, train_iter, summary_writer)
+        # Publish latest model
+        self._model_server.update(self._model)
 
-        # Checkpoint every 100 models
-        if train_iter % 100 == 0:
-            torch.save({
-                'train_iter': train_iter,
-                'model_state_dict': net.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                # TODO: state_buffer state
-            }, f'{summary_writer.get_logdir()}/ckpt.{train_iter}.pt')
-
+        # Log stats
+        # TODO: Make summary logging a globally available.
+        #       Then loss can return only a single value to backprop.
+        self._summary_writer.add_scalar('total_loss', total_loss, train_iter)
+        self._summary_writer.add_scalar('value_loss', value_loss, train_iter)
+        self._summary_writer.add_scalar('prior_loss', prior_loss, train_iter)
+        self._summary_writer.add_scalar('learning_rate', self._lr_schedule.get_lr()[0], train_iter)
 
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument('-o', '--outdir',
-        help="Directory for tensorboard logging and checkpoints")
-    parser.add_argument('--debug',
-        action='store_true',
-        help="Enable debug mode")
-    # TODO: Training config
+    parser.add_argument('-o', '--logdir',
+        required=True,
+        help="Directory for tensorboard logging and checkpoints.")
+    parser.add_argument('-c', '--config',
+        required=True,
+        help="Path to training config yaml file.")
     args = parser.parse_args()
 
-    if args.debug:
-        torch.autograd.set_detect_anomaly(True)
+    # Load config file and save copy to logdir
+    os.makedirs(args.logdir)
+    config = AlphaZeroConfig(args.config)
+    config.save(os.path.join(args.logdir, 'config.yaml'))
 
-    summary_writer = SummaryWriter(log_dir=args.outdir)
-    alphazero_train(summary_writer)
-    summary_writer.close()
+    # Construct and configure self-play and training
+    model_server = ModelServer(args.logdir, default_model=UniformModel())
+    dataset = ReplayDataset(config)
+
+    train_worker = TrainWorker(config, model_server, dataset, args.logdir)
+    selfplay_worker = SelfPlayWorker(config, model_server, dataset)
+
+    # Start training
+    single_process = True
+    num_selfplay = 1
+    if single_process:
+        done = False
+        for _ in range(config.training['num_steps']):
+            for _ in range(num_selfplay):
+                selfplay_worker.play_game()
+            train_worker.process_batch()
+    else:
+        # 1. Launch N self-play workers in new processes
+        # 2. Launch training worker
+        pass
+
     print("Done.")

@@ -1,0 +1,24 @@
+game:
+    module: alphazero.games.connectfour
+    name: ConnectFour
+model:
+    module: alphazero.games.connectfour
+    name: AlphaZeroC4
+    kwargs:
+        num_blocks: 6
+        channels_per_block: 32
+loss:
+    module: alphazero.games.connectfour
+    name: AlphaZeroC4Loss
+training:
+    num_steps: 10000
+    batch_size: 128
+    lr: 0.2
+    momentum: 0.9
+    weight_decay: 1.e-4
+    lr_schedule_gamma: 0.1
+    lr_schedule: [1000, 2000, 4000]
+selfplay:
+    num_expansions_per_sim: 128
+    exploration_depth: 4
+    reuse_search_tree: True

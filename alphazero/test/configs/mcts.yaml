@@ -1,0 +1,6 @@
+game:
+    module: alphazero.games.tictactoe
+    name: TicTacToe
+model:
+    module: alphazero.models
+    name: UniformModel

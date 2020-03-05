@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 
 class MCTreeNode:
@@ -7,16 +8,28 @@ class MCTreeNode:
                   ('W', np.float32),
                   ('P', np.float32)]
 
-    def __init__(self, state, parent=None):
-        """MCTreeNode is a thin wrapper around a game state that implements MCTS."""
-
-        N = len(state.valid_actions)
-
-        self.state = state
+    def __init__(self, parent=None):
         self.parent = parent
-        self.children = [None] * N
-        self._expanded = False
-        self._edges = np.zeros(N, dtype=MCTreeNode.EDGE_DTYPE)
+        self.children = None
+        self._edges = None
+
+    @property
+    def expanded(self):
+        return self.children is not None
+
+    def expand(self, p):
+        num_actions = len(p)
+        self.children = [None] * num_actions
+        self._edges = np.zeros(num_actions, dtype=MCTreeNode.EDGE_DTYPE)
+        assert np.all(p >= 0), f'Node must be expanded with proper, non-negative distribution. Got: {p}'
+        assert np.abs(np.sum(p) - 1) < 1e-6, f'Node must be expanded with normalized distribution. Got: {p}'
+        self._edges['P'] = p
+
+    def traverse(self, action_index):
+        assert action_index < len(self.children)
+        if self.children[action_index] is None:
+            self.children[action_index] = MCTreeNode(self)
+        return self.children[action_index]
 
     @property
     def action_prior(self):
@@ -36,6 +49,15 @@ class MCTreeNode:
         Q[N == 0] = 0
         return Q
 
+    def ucb_score(self, c_base=19652, c_init=1.25):
+        Q = self.mean_value
+        P = self.action_prior
+        Ns = np.sum(self.num_visits)
+        Cs = np.log((1 + Ns + c_base) / c_base) + c_init
+        s = np.sqrt(Ns) / (1 + self.num_visits)
+        U = Cs * P * s
+        return Q + U
+
     def pi(self, temperature=1):
         assert temperature > 0
         nt = self._edges['N'] ** (1 / temperature)
@@ -43,7 +65,13 @@ class MCTreeNode:
         if s > 0:
             return nt / s
         else:
-            return np.ones_like(self._edges['N']) / len(self._edges)
+            return np.ones_like(nt) / len(nt)
+
+    def sample_action(self, temperature=1):
+        return np.random.choice(len(self.children), p=self.pi(temperature))
+
+    def greedy_action(self):
+        return np.argmax(self.pi())
 
     def kill_siblings(self):
         if self.parent is None:
@@ -51,76 +79,76 @@ class MCTreeNode:
         for i, sibling in enumerate(self.parent.children):
             if sibling != self:
                 self.parent.children[i] = None
+                del sibling
 
-    def traverse(self, action_index):
-        """Construct new game state that results from taking given action.
-        Return the corresponding MCTreeNode in the search tree.
-        """
-        if self.children[action_index] is None:
-            new_state = self.state.copy()
-            new_state.take_action(action_index)
-            new_node = MCTreeNode(new_state, self)
-            self.children[action_index] = new_node
-        return self.children[action_index]
+    def add_value_observation(self, action_index, v):
+        self._edges['W'][action_index] += v
+        self._edges['N'][action_index] += 1
 
-    def expand(self, net, c_base=19652, c_init=1.25, epsilon=0.25, alpha=0.3, maxdepth=200):
-        """Expand the tree rooted at this node."""
+    def add_exploration_noise(self, alpha, epsilon):
+        P = self.action_prior
+        eta = np.random.dirichlet([alpha] * len(P))
+        self._edges['P'] = (1 - epsilon) * P + epsilon * eta
 
-        node = self
-        v = None
 
-        # Traverse tree to find leaf, taking caution to avoid infinite loops
-        for depth in range(maxdepth):
+def evaluate(game, model):
+    model.eval()
+    with torch.no_grad():
+        x = game.render()
+        x = torch.from_numpy(x[None, ...])
+        valid = torch.zeros(1, game.NUM_ACTIONS, dtype=torch.bool)
+        valid[0, game.valid_actions] = 1
+        p, v = model(x, valid)
+        p = torch.nn.functional.softmax(p[valid], dim=0)
+        return p.numpy(), v[0].numpy()
 
-            # i.   If game is over in current (simulated) state, backup result
-            # ii.  If state hasn't been visited, evaluate (v, p) = f(s), backup result
-            # iii. Else, traverse branch of a = argmax Q(s,a) + U(s,a)
 
-            if node.state.winner is not None:
-                v = 0 if node.state.winner == -1 else 1
-                break
-            elif not node._expanded:
-                # TODO: Enqueue and block for results
-                p, v = node.state.eval(net)
-                node._edges['P'] = p
-                node._expanded = True
-                break
+def run_mcts(game, root, model, num_simulations, alpha=0.3, epsilon=0.25):
+    # TODO: Tree search args from config
 
-            # TODO: Utility function for evaluating UCT?
-            Q = node.mean_value
-            P = node.action_prior
+    # Expand root and add exploration noise
+    if not root.expanded:
+        p, _ = evaluate(game, model)
+        root.expand(p)
+    root.add_exploration_noise(alpha, epsilon)
 
-            if node == self:
-                eta = np.random.dirichlet([alpha] * len(P))
-                P = (1 - epsilon) * P + epsilon * eta
-            Ns = np.sum(node.num_visits)
-            Cs = np.log((1 + Ns + c_base) / c_base) + c_init
-            s = np.sqrt(Ns) / (1 + node.num_visits)
-            U = Cs * P * s
-            action_index = np.argmax(Q + U)
+    for _ in range(num_simulations):
+        node = root
+        simulation = game.clone()
+
+        while node.expanded and not simulation.terminal:
+            action_index = np.argmax(node.ucb_score())
             node = node.traverse(action_index)
+            action = simulation.valid_actions[action_index]
+            simulation.take_action(action)
 
-        # Search terminated early
-        if v is None:
-            print("WARNING: search tree expansion terminated early.")
-            return
+        # Took 'action' to land in the current terminal or unevaluated state.
 
-        # Backup results
-        # Assume each player acts optimally, so that our action prior and state value
-        # is always from the point-of-view of whoever's turn it is (e.g. the parent of
-        # the node being evaluated). However, (for a two player game) we need to reverse
-        # the sign of the value in each backup step working towards the root of the tree.
-        # Intuitively, a strong position for the current player implies weakness in the
-        # opponent's prior position.
-        while node.parent is not None:
-            prev_action_index = node.parent.children.index(node)
-            node.parent._edges['W'][prev_action_index] += v
-            node.parent._edges['N'][prev_action_index] += 1
+        if simulation.terminal:
+            # Get the terminal value of the simulation from the viewpoint of
+            # the player that took the action leading into the terminal state.
+            v = simulation.terminal_value(simulation.prev_player)
+        else:
+            # Evaluate leaf node and expand search frontier
+            p, v = evaluate(simulation, model)
+            node.expand(p)
+
+            # v is an estimate of V(s), the value of the evaluated state from the viewpoint of the
+            # next player whose turn it is to make a move. Since we're using this result to
+            # estimate Q(s,a) for the parent state and action leading into the current state,
+            # we invert the value.
             v *= -1
-            if node == self:
-                # Important: Shouldn't backpropogate all the way to root of game!
-                # Break here so we only backprop to the root of this particular move's MCTS.
-                break
-            else:
-                node = node.parent
 
+        # Backup value through this simulation's search path
+        while node.parent is not None:
+            # Important: Shouldn't backpropogate all the way to root of game!
+            # Break here so we only backprop to the root of this particular move's MCTS.
+            if node == root:
+                break
+            action_index = node.parent.children.index(node)
+            node.parent.add_value_observation(action_index, v)
+            # We need to reverse the sign of the value in each backup step working towards
+            # the root of the tree. Intuitively, a strong position for the current player
+            # implies weakness in the opponent's prior position.
+            v *= -1
+            node = node.parent

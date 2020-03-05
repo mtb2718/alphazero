@@ -1,149 +1,160 @@
 from argparse import ArgumentParser
+import importlib
+import os
 
 import numpy as np
 import torch
 
-from connectfour import AlphaZeroC4, ConnectFourState, GRID_WIDTH
-from mcts import MCTreeNode
+from alphazero.config import AlphaZeroConfig
+from alphazero.mcts import MCTreeNode, run_mcts
 
 
-class Player:
-    # TODO: ABC
+class Player: # TODO: ABC
     def __init__(self):
         pass
-    def set_game_state(self, state):
+    def set_game(self, game):
         pass
     def get_action(self):
         pass
-    def observe_action(self, action_index, new_state):
+    def observe_action(self, action):
         pass
 
 
 class HumanPlayer(Player):
     def __init__(self):
         super(HumanPlayer, self).__init__()
-        self._state = None
+        self._game = None
 
-    def set_game_state(self, state):
-        self._state = state
+    def set_game(self, game):
+        self._game = game
 
     def get_action(self):
-        print(self._state)
-        a = input(f'(Player {self._state.turn}) Take Action [0-{GRID_WIDTH - 1}, (u)ndo, (q)uit, (d)ebug]: ')
+        print(self._game)
+        a = input(f'(Player {self._game.next_player}) Take Action [{self._game.valid_actions}], (q)uit, (d)ebug: ')
         try:
             action = int(a)
-            action_index = self._state.valid_actions.index(action)
-            return action_index, None
+            return action, None
         except:
             return None, a
 
-    def observe_action(self, action_index, new_state):
-        self._state = new_state
-
 
 class AlphaZeroPlayer(Player):
+    # TODO: Merge this with the SelfPlayWorker class and add .train()/.eval() mode?
     def __init__(self, model, debug=False):
         super(AlphaZeroPlayer, self).__init__()
         self._model = model
         self._debug = debug
-        self._search_tree = None
+        self._game = None
+        self._tree = None
 
-    def set_game_state(self, state):
-        self._search_tree = MCTreeNode(state)
+    def set_game(self, game):
+        self._game = game
+        self._tree = MCTreeNode()
+        run_mcts(game, self._tree, self._model, 0, epsilon=0)
 
     def get_action(self):
         if self._debug:
-            print(self._search_tree.state)
-        with torch.no_grad():
-            for _ in range(1024):
-                self._search_tree.expand(self._model)
+            print(self._game)
+        run_mcts(self._game, self._tree, self._model, 16, epsilon=0)
         if self._debug:
-            Nv = self._search_tree.num_visits
-            P = self._search_tree.action_prior
-            print(f'Num visits ({np.sum(Nv)}): {Nv}')
+            N = self._tree.num_visits
+            P = self._tree.action_prior
+            print(f'Num visits ({np.sum(N)}): {N}')
             print(f'Action Prior: {P}')
-        action_index = np.argmax(self._search_tree.pi())
-        self._search_tree = self._search_tree.traverse(action_index)
-        self._search_tree.kill_siblings()
-        return action_index, None
+        action_index = self._tree.greedy_action()
+        self._tree = self._tree.traverse(action_index)
+        self._tree.kill_siblings()
+        action = self._game.valid_actions[action_index]
+        return action, None
 
-    def observe_action(self, action_index, new_state):
-        self._search_tree = self._search_tree.traverse(action_index)
-        self._search_tree.kill_siblings()
+    def observe_action(self, action):
+        action_index = self._game.valid_actions.index(action)
+        self._tree = self._tree.traverse(action_index)
+        self._tree.kill_siblings()
 
 
-def play(state, players, current_player_index=0):
+def play(game, players, current_player_index=0):
     """Play game from given state with given players."""
 
-    states = [state]
     for player in players:
-        player.set_game_state(state.copy())
+        player.set_game(game)
 
-    while True:
+    while not game.terminal:
 
         player = players[current_player_index]
-        action_index, game_control = player.get_action()
+        action, game_control = player.get_action()
 
         if game_control is None:
-            assert action_index >= 0 and action_index < len(state.valid_actions)
-            state = state.copy()
-            state.take_action(action_index)
-            states.append(state)
+            if action not in game.valid_actions:
+                print('Invalid Action.')
+                continue
             for p in players:
                 if p != player:
-                    p.observe_action(action_index, state.copy())
+                    p.observe_action(action)
+            game.take_action(action)
             current_player_index = (current_player_index + 1) % len(players)
         elif game_control == 'q':
             exit(0)
-        elif game_control == 'u':
-            if len(states) > 1:
-                state = states[-2]
-                states = states[:-1]
-                current_player_index = (current_player_index - 1) % len(players)
         elif game_control == 'd':
-            import pdb
-            pdb.set_trace()
+            import pdb; pdb.set_trace()
             continue
         else:
             print('Invalid Selection.')
             continue
 
-        if state.winner is None:
-            continue
-        else:
-            print(state)
-            if state.winner >= 0:
-                print(f'Player {state.winner} wins!')
-            else:
-                print('Game drawn!')
-        break
+    print(game)
+    if game.winner >= 0:
+        print(f'Player {game.winner} wins!')
+    else:
+        print('Game drawn!')
 
 
 def load_ckpt(ckpt):
-    model = AlphaZeroC4()
+    config_path = os.path.join(os.path.dirname(ckpt), 'config.yaml')
+    config = AlphaZeroConfig(config_path)
+    model = config.Model()
     checkpoint = torch.load(ckpt)
     model.load_state_dict(checkpoint['model_state_dict'])
-    model.eval()
-    return model
+    return model, config
 
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument('ckpt',
+    parser.add_argument('-0', '--ckpt0',
+        default=None,
         help="Path to a ckpt.pt file")
-    # TODO: Support N-player games with arbitrary arrangments of human and ckpt players
-    '''
-    parser.add_argument('-p', '--player',
-        type=int,
-        default=0,
-        help="Select index of human player.")
-    '''
+    parser.add_argument('-1', '--ckpt1',
+        default=None,
+        help="Path to a ckpt.pt file")
+    parser.add_argument('-g', '--game',
+        default=None,
+        help="Import path of Game to play, if no checkpoints specified.")
     args = parser.parse_args()
 
-    model = load_ckpt(args.ckpt)
-    state = ConnectFourState()
-    play(state, [
-        AlphaZeroPlayer(model, True),
-        #AlphaZeroPlayer(model, True),
-        HumanPlayer(),
-    ])
+    players = []
+    configs = []
+
+    Game = None
+    if args.game:
+        module_path = '.'.join(args.game.split('.')[:-1])
+        module = importlib.import_module(module_path)
+        Game = getattr(module, args.game.split('.')[-1])
+
+    for i in (0, 1):
+        ckpt = getattr(args, f'ckpt{i}', None)
+        if ckpt:
+            model, config = load_ckpt(ckpt)
+            if not Game:
+                Game = config.Game
+            else:
+                assert Game == config.Game, 'AlphaZero players must agree on game.'
+            player = AlphaZeroPlayer(model)
+        else:
+            player = HumanPlayer()
+            config = None
+        players.append(player)
+        configs.append(config)
+
+    assert Game is not None, 'Game must be specified either in config or on the command line.'
+
+    play(Game(), players)
