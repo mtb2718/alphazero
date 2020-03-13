@@ -21,7 +21,6 @@ class AlphaZeroC4(AlphaZero):
 
     def forward(self, x, p_valid):
         p, v = super(AlphaZeroC4, self).forward(x)
-
         filled_cells = torch.sum(x, dim=1)
         assert torch.all((filled_cells == 0) | (filled_cells == 1))
         next_row_in_col = torch.sum(filled_cells, dim=1).long()
@@ -31,7 +30,7 @@ class AlphaZeroC4(AlphaZero):
         # Mask invalid grid cells, squash to BxA
         # XXX: Should be a fancy vectorized way to do this
         B = p.shape[0]
-        valid_cells = torch.zeros(B, GRID_HEIGHT, GRID_WIDTH)
+        valid_cells = torch.zeros_like(p)
         for b, c in product(range(B), range(GRID_WIDTH)):
             r = next_row_in_col[b, c]
             if r < GRID_HEIGHT:

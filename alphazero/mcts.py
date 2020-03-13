@@ -94,13 +94,17 @@ class MCTreeNode:
 def evaluate(game, model):
     model.eval()
     with torch.no_grad():
+        try:
+            device = next(model.parameters()).device
+        except:
+            device = torch.device('cpu')
         x = game.render()
-        x = torch.from_numpy(x[None, ...])
-        valid = torch.zeros(1, game.NUM_ACTIONS, dtype=torch.bool)
+        x = torch.from_numpy(x[None, ...]).to(device)
+        valid = torch.zeros(1, game.NUM_ACTIONS, dtype=torch.bool, device=device)
         valid[0, game.valid_actions] = 1
         p, v = model(x, valid)
         p = torch.nn.functional.softmax(p[valid], dim=0)
-        return p.numpy(), v[0].numpy()
+        return p.cpu().numpy(), v[0].cpu().numpy()
 
 
 def run_mcts(game, root, model, num_simulations, alpha=0.3, epsilon=0.25):

@@ -89,10 +89,10 @@ class ModelServer:
 
 
 class TrainWorker:
-    def __init__(self, config, model_server, dataset, outdir):
+    def __init__(self, config, model_server, dataset, outdir, device):
 
         self._config = config
-        self._model = config.Model()
+        self._model = config.Model().to(device)
         self._model_server = model_server
         self._loss = config.Loss()
 
@@ -111,6 +111,7 @@ class TrainWorker:
         self._dataset = dataset
         self._dataloader = DataLoader(dataset,
                                       batch_size=config.training['batch_size'],
+                                      pin_memory=True,
                                       shuffle=True,
                                       num_workers=0)
         self._batch_iter = enumerate(self._dataloader)
@@ -130,8 +131,13 @@ class TrainWorker:
 
         # Run inference, evaluate loss, backprop
         self._model.train()
-        p_hat, v_hat = self._model(batch['x'], batch['p_valid'])
-        prior_loss, value_loss = self._loss(batch['p'], batch['z'], p_hat, v_hat, batch['p_valid'])
+        device = next(self._model.parameters()).device
+        x = batch['x'].to(device)
+        p = batch['p'].to(device)
+        z = batch['z'].to(device)
+        p_valid = batch['p_valid'].to(device)
+        p_hat, v_hat = self._model(x, p_valid)
+        prior_loss, value_loss = self._loss(p, z, p_hat, v_hat, p_valid)
         self._optimizer.zero_grad()
         total_loss = prior_loss + value_loss
         total_loss.backward()
@@ -160,6 +166,12 @@ if __name__ == '__main__':
         help="Path to training config yaml file.")
     args = parser.parse_args()
 
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    print('Using device', device)
+
     # Load config file and save copy to logdir
     os.makedirs(args.logdir)
     config = AlphaZeroConfig(args.config)
@@ -169,7 +181,7 @@ if __name__ == '__main__':
     model_server = ModelServer(args.logdir, default_model=UniformModel())
     dataset = ReplayDataset(config)
 
-    train_worker = TrainWorker(config, model_server, dataset, args.logdir)
+    train_worker = TrainWorker(config, model_server, dataset, args.logdir, device)
     selfplay_worker = SelfPlayWorker(config, model_server, dataset)
 
     # Start training
