@@ -9,7 +9,7 @@ from alphazero.mcts import MCTreeNode, run_mcts
 from alphazero.train import ReplayDataset
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CONFIG = os.path.join(HERE, 'configs/mcts.yaml')
+CONFIG = os.path.join(HERE, 'configs/tictactoe.yaml')
 
 def test_mcts_and_replay_buffer():
 

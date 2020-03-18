@@ -10,51 +10,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from alphazero.config import AlphaZeroConfig
 from alphazero.models import UniformModel
+from alphazero.replay_buffer import ReplayBufferDataset, ReplayBufferSampler
 from alphazero.selfplay import SelfPlayWorker
-
-
-class ReplayDataset(Dataset):
-
-    def __init__(self, config):
-        # TODO: sqlite
-        self._config = config
-        self._buf = []
-
-    def __getitem__(self, i):
-        history, move_index, stats = self._buf[i % len(self._buf)]
-        game = self._config.Game(history=history)
-        game_at_move = self._config.Game(history=history[:move_index])
-        x = game_at_move.render()
-        p = np.zeros(game_at_move.NUM_ACTIONS, np.float32)
-        p[game_at_move.valid_actions] = stats / np.sum(stats)
-        valid = np.zeros(game_at_move.NUM_ACTIONS, np.bool)
-        valid[game_at_move.valid_actions] = True
-        z = game.terminal_value(game_at_move.next_player)
-        z = np.array([z], dtype=np.float32)
-        return {'x': x, 'z': z, 'p': p, 'p_valid': valid}
-
-    def __len__(self):
-        return int(1e6)
-
-    @property
-    def num_examples(self):
-        # TODO: unhack the actual 'len' method
-        return len(self._buf)
-
-    def save_game(self, game):
-        # Assign value of leaf state and parents based on outcome of game.
-        # 0 for draw, otherwise assume all leaf states corresponding to current player winning.
-
-        MAX_BUFFER_SIZE = 64 * 1024
-
-        assert game.terminal
-        # Note, we don't save the terminal game states in the buffer
-        L = len(game.history)
-        for i in range(L):
-            self._buf.append((game.history, i, game.search_statistics[i]))
-
-        self._buf = self._buf[-MAX_BUFFER_SIZE:]
-        print(f'Updated buffer, now contains {len(self._buf)} states')
 
 
 class ModelServer:
@@ -105,14 +62,14 @@ class TrainWorker:
                                         gamma=config.training['lr_schedule_gamma'])
         self._summary_writer = SummaryWriter(log_dir=outdir)
 
-        # TODO: setting num_workers to 1 or more requires support for concurrent dataset writes
-        # inside of save_game method, i.e. sqlite or similar
-        # TODO: Configure sampling without replacement within a single batch
         self._dataset = dataset
+        # TODO: Replay buffer settings from config
+        self._sampler = ReplayBufferSampler(dataset,
+                                            batch_size=config.training['batch_size'],
+                                            bufferlen=(64 * 1024))
         self._dataloader = DataLoader(dataset,
-                                      batch_size=config.training['batch_size'],
+                                      batch_sampler=self._sampler,
                                       pin_memory=True,
-                                      shuffle=True,
                                       num_workers=0)
         self._batch_iter = enumerate(self._dataloader)
 
@@ -124,10 +81,10 @@ class TrainWorker:
 
         # Don't update network unless we can make a full batch
         BATCH_SIZE = batch['x'].shape[0]
-        N = self._dataset.num_examples
+        N = len(self._dataset)
         if N < BATCH_SIZE:
             print(f"Skipping batch ({BATCH_SIZE}), too few examples in replay buffer ({N}).")
-            return False
+            return
 
         # Run inference, evaluate loss, backprop
         self._model.train()
@@ -179,7 +136,7 @@ if __name__ == '__main__':
 
     # Construct and configure self-play and training
     model_server = ModelServer(args.logdir, default_model=UniformModel())
-    dataset = ReplayDataset(config)
+    dataset = ReplayBufferDataset(config, os.path.join(args.logdir, 'selfplay.sqlite'))
 
     train_worker = TrainWorker(config, model_server, dataset, args.logdir, device)
     selfplay_worker = SelfPlayWorker(config, model_server, dataset)

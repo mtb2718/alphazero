@@ -10,6 +10,8 @@ class Game:
         assert self.NUM_ACTIONS > 0, 'Game classes must override NUM_ACTIONS class attribute.'
         self.history = history or []
         self.search_statistics = search_statistics or [None] * len(self.history)
+        assert len(self.history) == len(self.search_statistics), \
+            'Length of game and search statistics must match.'
 
     def __len__(self):
         return len(self.history)
@@ -55,7 +57,6 @@ class Game:
     @property
     def action_names(self):
         return [str(a) for a in self.valid_actions]
-
 
     def render(self, turn=None):
         raise NotImplementedError

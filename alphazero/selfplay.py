@@ -30,4 +30,4 @@ class SelfPlayWorker:
                 tree = MCTreeNode()
 
         print(f'Player {game.winner} (v{model_version}) wins game after {len(game.history)} turns')
-        self._dataset.save_game(game)
+        self._dataset.add_game(game, model_version)

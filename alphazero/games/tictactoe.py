@@ -39,9 +39,6 @@ class TicTacToe(Game):
         [2, 4, 6]
     ]
 
-    def __init__(self, history=None):
-        super(TicTacToe, self).__init__(history)
-
     @property
     def terminal(self):
         if len(self.history) < 5:
