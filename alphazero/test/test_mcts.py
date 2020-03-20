@@ -6,12 +6,12 @@ import torch
 from alphazero.config import AlphaZeroConfig
 from alphazero.game import Game
 from alphazero.mcts import MCTreeNode, run_mcts
-from alphazero.train import ReplayDataset
+from alphazero.replay_buffer import ReplayBufferDataset
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(HERE, 'configs/tictactoe.yaml')
 
-def test_mcts_and_replay_buffer():
+def test_mcts_and_replay_buffer(tmp_path):
 
     NUM_SIMS_PER_ACTION = 64
     TEST_GAME_HISTORY = [0, 2, 8, 4, 6, 7, 3]
@@ -29,7 +29,7 @@ def test_mcts_and_replay_buffer():
     config = AlphaZeroConfig(CONFIG)
     model = config.Model()
     game = config.Game()
-    dataset = ReplayDataset(config)
+    dataset = ReplayBufferDataset(config, os.path.join(str(tmp_path), 'test.sqlite'))
 
     # Populate with search stats as we step through game
     # Should expect the values ultimately coming out of the replay buffer to match.
@@ -45,12 +45,12 @@ def test_mcts_and_replay_buffer():
         game.take_action(action, search_statistics=root.num_visits)
 
     # Insert game replay buffer
-    dataset.save_game(game)
-    assert dataset.num_examples == len(TEST_GAME_HISTORY), \
+    dataset.add_game(game, 0)
+    assert len(dataset) == len(TEST_GAME_HISTORY), \
         'Replay buffer should have an example for each non-terminal game state'
 
     # Test retrieval from replay buffer returns values we expect
-    for i in range(dataset.num_examples):
+    for i in range(len(dataset)):
         example = dataset[i]
         assert np.sum(example['p_valid']) == 9 - i, 'Expect history to be inserted sequentially'
 

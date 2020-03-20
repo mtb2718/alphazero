@@ -85,6 +85,14 @@ class AlphaZero(nn.Module):
         return p, v
 
 
+class UniformModel(nn.Module):
+    def forward(self, x, p_valid):
+        B = p_valid.shape[0]
+        p = torch.ones_like(p_valid, dtype=torch.float32)
+        v = torch.zeros(B, 1, dtype=torch.float32, device=x.device)
+        return p, v
+
+
 class AlphaZeroLoss(nn.Module):
 
     def forward(self, p, z, p_hat, v_hat, p_valid):
@@ -105,10 +113,3 @@ class AlphaZeroLoss(nn.Module):
         prior_loss = prior_loss.mean()
 
         return prior_loss, value_loss
-
-class UniformModel(nn.Module):
-    def forward(self, x, p_valid):
-        B = p_valid.shape[0]
-        p = torch.ones_like(p_valid, dtype=torch.float32)
-        v = torch.zeros(B, 1, dtype=torch.float32, device=x.device)
-        return p, v

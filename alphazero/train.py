@@ -1,116 +1,78 @@
 from argparse import ArgumentParser
 import os
+import shutil
+import time
+import yaml
 
-import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
-from torch.optim import SGD
-from torch.optim.lr_scheduler import MultiStepLR
+import torch.multiprocessing as mp
 from torch.utils.tensorboard import SummaryWriter
 
 from alphazero.config import AlphaZeroConfig
-from alphazero.models import UniformModel
-from alphazero.replay_buffer import ReplayBufferDataset, ReplayBufferSampler
+from alphazero.model_server import ModelServer
+from alphazero.replay_buffer import ReplayBufferDataset
 from alphazero.selfplay import SelfPlayWorker
+from alphazero.training import TrainingWorker
 
 
-class ModelServer:
-
-    def __init__(self, logdir, default_model=None, ver=0, ckpt_period=50):
-        self._model = None
-        self._default_model = default_model
-        self._logdir = logdir
-        self._model_ver = ver
-        self._ckpt_period = ckpt_period
-
-    def update(self, model):
-        self._model = model # TODO: shared weights in memory?
-        self._model_ver += 1
-        if self._ckpt_period > 0 and self._model_ver % self._ckpt_period == 0:
-            self.checkpoint()
-
-    def latest(self):
-        if self._model_ver > 0:
-            return self._model_ver, self._model
-        else:
-            return 0, self._default_model
-
-    def checkpoint(self):
-        torch.save({
-            'train_iter': self._model_ver,
-            'model_state_dict': self._model.state_dict(),
-            # TODO: Move checkpointing outside of this cache
-            #'optimizer_state_dict': optimizer.state_dict(),
-        }, f'{self._logdir}/ckpt.{self._model_ver}.pt')
+def load_config(logdir):
+    # Load config file
+    config_path = os.path.join(logdir, 'config.yaml')
+    config = AlphaZeroConfig(config_path)
+    return config
 
 
+def init_logdir(args):
+    # Create logdir and save copy of config and args for posterity
+    os.makedirs(args.logdir)
+    conf_path = os.path.join(args.logdir, 'config.yaml')
+    shutil.copyfile(args.config, conf_path)
+    with open(os.path.join(args.logdir, 'args.yaml'), 'w') as f:
+        yaml.dump(vars(args), f)
 
-class TrainWorker:
-    def __init__(self, config, model_server, dataset, outdir, device):
 
-        self._config = config
-        self._model = config.Model().to(device)
-        self._model_server = model_server
-        self._loss = config.Loss()
+def _init_training(logdir, device='cpu'):
+    # Create summary writer for tensorboard logging
+    summary_writer = SummaryWriter(log_dir=logdir)
 
-        self._optimizer = SGD(self._model.parameters(),
-                              lr=config.training['lr'],
-                              momentum=config.training['momentum'],
-                              weight_decay=config.training['weight_decay'])
-        self._lr_schedule = MultiStepLR(self._optimizer,
-                                        config.training['lr_schedule'],
-                                        gamma=config.training['lr_schedule_gamma'])
-        self._summary_writer = SummaryWriter(log_dir=outdir)
+    # Create dataset and model server instances
+    config = load_config(logdir)
+    dbpath = os.path.join(logdir, 'selfplay.sqlite')
+    dataset = ReplayBufferDataset(config, dbpath)
+    model_server = ModelServer(logdir)
 
-        self._dataset = dataset
-        # TODO: Replay buffer settings from config
-        self._sampler = ReplayBufferSampler(dataset,
-                                            batch_size=config.training['batch_size'],
-                                            bufferlen=(64 * 1024))
-        self._dataloader = DataLoader(dataset,
-                                      batch_sampler=self._sampler,
-                                      pin_memory=True,
-                                      num_workers=0)
-        self._batch_iter = enumerate(self._dataloader)
+    device = torch.device(device)
+    train_worker = TrainingWorker(config, model_server, dataset, summary_writer, device)
+    return train_worker
 
-    def __del__(self):
-        self._summary_writer.close()
 
-    def process_batch(self):
-        train_iter, batch = next(self._batch_iter)
+def _init_selfplay(logdir, device='cpu'):
+    # Create dataset and model server instances
+    config = load_config(logdir)
+    dbpath = os.path.join(logdir, 'selfplay.sqlite')
+    dataset = ReplayBufferDataset(config, dbpath)
+    model_server = ModelServer(logdir)
+    model_server.reset()
 
-        # Don't update network unless we can make a full batch
-        BATCH_SIZE = batch['x'].shape[0]
-        N = len(self._dataset)
-        if N < BATCH_SIZE:
-            print(f"Skipping batch ({BATCH_SIZE}), too few examples in replay buffer ({N}).")
-            return
+    device = torch.device(device)
+    selfplay_worker = SelfPlayWorker(config, model_server, dataset, device)
+    return selfplay_worker
 
-        # Run inference, evaluate loss, backprop
-        self._model.train()
-        device = next(self._model.parameters()).device
-        x = batch['x'].to(device)
-        p = batch['p'].to(device)
-        z = batch['z'].to(device)
-        p_valid = batch['p_valid'].to(device)
-        p_hat, v_hat = self._model(x, p_valid)
-        prior_loss, value_loss = self._loss(p, z, p_hat, v_hat, p_valid)
-        self._optimizer.zero_grad()
-        total_loss = prior_loss + value_loss
-        total_loss.backward()
-        self._optimizer.step()
-        self._lr_schedule.step()
 
-        # Publish latest model
-        self._model_server.update(self._model)
+def _selfplay(i, logdir, device):
+    selfplay_worker = _init_selfplay(logdir, device)
+    game = 1
+    while True:
+        game += 1
+        selfplay_worker.play_game()
 
-        # Log stats
-        # TODO: Make summary logging a globally available.
-        #       Then loss can return only a single value to backprop.
-        self._summary_writer.add_scalar('total_loss', total_loss, train_iter)
-        self._summary_writer.add_scalar('value_loss', value_loss, train_iter)
-        self._summary_writer.add_scalar('prior_loss', prior_loss, train_iter)
-        self._summary_writer.add_scalar('learning_rate', self._lr_schedule.get_lr()[0], train_iter)
+
+def _train(logdir, device):
+    config = load_config(logdir)
+    training_worker = _init_training(logdir, device)
+    for _ in range(config.training['num_steps']):
+        if not training_worker.process_batch():
+            time.sleep(2)
 
 
 if __name__ == '__main__':
@@ -121,38 +83,37 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--config',
         required=True,
         help="Path to training config yaml file.")
+    parser.add_argument('-n', '--num-selfplay-workers',
+        type=int,
+        default=0,
+        help='Number of subprocess selfplay workers (default 0 for no concurrency).')
+    parser.add_argument('-d', '--device',
+        default='cpu',
+        help='The device to use for training and self-play inference, e.g. \'cuda:0\'. Currently only support for single device')
     args = parser.parse_args()
-
-    if torch.cuda.is_available():
-        device = torch.device('cuda')
-    else:
-        device = torch.device('cpu')
-    print('Using device', device)
-
-    # Load config file and save copy to logdir
-    os.makedirs(args.logdir)
-    config = AlphaZeroConfig(args.config)
-    config.save(os.path.join(args.logdir, 'config.yaml'))
-
-    # Construct and configure self-play and training
-    model_server = ModelServer(args.logdir, default_model=UniformModel())
-    dataset = ReplayBufferDataset(config, os.path.join(args.logdir, 'selfplay.sqlite'))
-
-    train_worker = TrainWorker(config, model_server, dataset, args.logdir, device)
-    selfplay_worker = SelfPlayWorker(config, model_server, dataset)
+    init_logdir(args)
 
     # Start training
-    single_process = True
-    num_selfplay = 1
-    if single_process:
-        done = False
+    # TODO: Properly break after num_steps training iterations
+    # TODO: Kill workers when training is done
+    if args.num_selfplay_workers == 0:
+        config = load_config(args.logdir)
+        selfplay_worker = _init_selfplay(args.logdir, args.device)
+        training_worker = _init_training(args.logdir, args.device)
         for _ in range(config.training['num_steps']):
-            for _ in range(num_selfplay):
-                selfplay_worker.play_game()
-            train_worker.process_batch()
+            selfplay_worker.play_game()
+            training_worker.process_batch()
     else:
         # 1. Launch N self-play workers in new processes
-        # 2. Launch training worker
-        pass
+        selfplay_ctx = mp.spawn(fn=_selfplay,
+                                args=(args.logdir, args.device),
+                                nprocs=args.num_selfplay_workers,
+                                join=False)
+
+        # 2. Train concurrently in main thread
+        _train(args.logdir, args.device)
+
+        # 3. Cleanup
+        selfplay_ctx.join()
 
     print("Done.")

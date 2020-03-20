@@ -1,5 +1,4 @@
 import importlib
-import shutil
 import yaml
 
 def _load_class(module_path, name):
@@ -32,8 +31,3 @@ class AlphaZeroConfig:
         # TODO: Could be nice to make a read-only nested dict view
         assert attr in ['selfplay', 'training']
         return self._conf[attr]
-
-    def save(self, path):
-        shutil.copyfile(self._config_path, path)
-    
-    

@@ -1,17 +1,25 @@
 from alphazero.mcts import MCTreeNode, run_mcts
+from alphazero.models import UniformModel
 
 
 class SelfPlayWorker:
-    def __init__(self, config, model_server, dataset):
+    def __init__(self, config, model_server, dataset, device):
         self._config = config
         self._model_server = model_server
+        self._model = config.Model().to(device)
         self._dataset = dataset
 
     def play_game(self):
         game = self._config.Game()
         tree = MCTreeNode()
 
-        model_version, model = self._model_server.latest()
+        # Copy the weights of the latest model, defaulting to a "uniform model"
+        # if the training thread has not yet pushed a model.
+        model_version = self._model_server.latest(self._model)
+        if model_version > 0:
+            model = self._model
+        else:
+            model = UniformModel()
 
         while not game.terminal:
             run_mcts(game, tree, model, self._config.selfplay['num_expansions_per_sim'])
