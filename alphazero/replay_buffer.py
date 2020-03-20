@@ -1,4 +1,5 @@
 from itertools import repeat
+import os
 import sqlite3
 
 import numpy as np
@@ -82,15 +83,34 @@ class SelfPlayDatabase(sqlite3.Connection):
         return cur.fetchone()[0]
 
 
+def make_forksafe(method):
+    """Decorator for RepalyBufferDataset methods that make use of a database
+    connection. Since SQLite connections aren't fork-safe, we must ensure
+    that a forked connection is not used to avoid database corruption.
+    # See: https://www.sqlite.org/howtocorrupt.html#fork
+    """
+    def forksafe_wrapper(self, *args, **kwargs):
+        pid = os.getpid()
+        if pid != self._pid:
+            self._db = SelfPlayDatabase.connect(self._dbpath)
+            self._pid = pid
+        return method(self, *args, **kwargs)
+        return result
+    return forksafe_wrapper
+
+
 class ReplayBufferDataset(Dataset):
 
     def __init__(self, config, dbpath):
         self._config = config
         self._dbpath = dbpath
-        self._db = SelfPlayDatabase.connect(dbpath)
+        self._db = SelfPlayDatabase.connect(self._dbpath)
         self._db.init_db()
+        self._pid = os.getpid()
 
+    @make_forksafe
     def __getitem__(self, i):
+        # Retrieve the game and move index referenced by the i'th game state
         game_index, move_index = self._db.read_state(i)
         finished_game, model_version = self._db.read_game(game_index, self._config.Game())
 
@@ -125,9 +145,11 @@ class ReplayBufferDataset(Dataset):
             'model_version': model_version,
         }
 
+    @make_forksafe
     def __len__(self):
         return self._db.num_states()
 
+    @make_forksafe
     def add_game(self, game, model_version):
         assert game.terminal
         self._db.write_game(game, model_version)

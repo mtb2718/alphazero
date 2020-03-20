@@ -99,6 +99,7 @@ def test_dataset(tmp_path):
         assert np.sum(example['x']) == i
         assert np.sum(example['p']) == 1.
 
+
 def test_dataloader(tmp_path):
     dbpath = str(tmp_path / 'testdb.sqlite')
     config = AlphaZeroConfig(CONFIG)
@@ -125,15 +126,15 @@ def test_dataloader(tmp_path):
     assert batch['x'].shape[0] == 8
 
     sampler.bufferlen = 8
-    games_seen = set()
+    states_seen = set()
     for _ in range(100):
         batch = next(batch_iter)
         game_nums = batch['game_index'].tolist()
         move_nums = batch['move_index'].tolist()
         state_ids = list(zip(game_nums, move_nums))
         assert len(state_ids) == len(set(state_ids)), 'No dup examples in batch'
-        games_seen |= set(state_ids)
-    assert len(games_seen) == sampler.bufferlen
+        states_seen |= set(state_ids)
+    assert len(states_seen) == sampler.bufferlen
 
     sampler.bufferlen = 4
     batch = next(batch_iter)
@@ -142,4 +143,48 @@ def test_dataloader(tmp_path):
     state_ids = list(zip(game_nums, move_nums))
     assert len(state_ids) > len(set(state_ids)), 'Batch must contain dups'
 
-    # TODO: Concurrently write to and sample from dataset
+
+def test_dataloader_with_workers(tmp_path):
+    dbpath = str(tmp_path / 'testdb.sqlite')
+    config = AlphaZeroConfig(CONFIG)
+
+    GAME_HISTORY = [0, 2, 8, 4, 6, 7, 3]
+    game = _play_game(GAME_HISTORY)
+
+    dataset = ReplayBufferDataset(config, dbpath)
+    sampler = ReplayBufferSampler(dataset, batch_size=8)
+    dataloader = DataLoader(dataset,
+                            batch_sampler=sampler,
+                            num_workers=4)
+    assert len(dataset) == 0
+    batch_iter = iter(dataloader)
+    with pytest.raises(StopIteration):
+        batch = next(batch_iter)
+
+    for i in range(20):
+        dataset.add_game(game, i)
+
+    assert len(dataset) == 20 * len(GAME_HISTORY)
+    batch_iter = iter(dataloader)
+    batch = next(batch_iter)
+    assert batch['x'].shape[0] == 8
+
+    sampler.bufferlen = 8
+    [next(batch_iter) for _ in range(16)] # Flush pre-loaded data
+    states_seen = set()
+    for _ in range(100):
+        batch = next(batch_iter)
+        game_nums = batch['game_index'].tolist()
+        move_nums = batch['move_index'].tolist()
+        state_ids = list(zip(game_nums, move_nums))
+        assert len(state_ids) == len(set(state_ids)), 'No dup examples in batch'
+        states_seen |= set(state_ids)
+    assert len(states_seen) == sampler.bufferlen
+
+    sampler.bufferlen = 4
+    [next(batch_iter) for _ in range(16)] # Flush pre-loaded data
+    batch = next(batch_iter)
+    game_nums = batch['game_index'].tolist()
+    move_nums = batch['move_index'].tolist()
+    state_ids = list(zip(game_nums, move_nums))
+    assert len(state_ids) > len(set(state_ids)), 'Batch must contain dups'
