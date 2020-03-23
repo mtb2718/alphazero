@@ -95,7 +95,6 @@ def make_forksafe(method):
             self._db = SelfPlayDatabase.connect(self._dbpath)
             self._pid = pid
         return method(self, *args, **kwargs)
-        return result
     return forksafe_wrapper
 
 
