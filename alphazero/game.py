@@ -60,3 +60,6 @@ class Game:
 
     def render(self, turn=None):
         raise NotImplementedError
+
+    def solve(self):
+        return None

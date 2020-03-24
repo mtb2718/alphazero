@@ -75,6 +75,15 @@ def _train(logdir, device):
             time.sleep(2)
 
 
+def _synchronous_play_and_train(logdir, device):
+    config = load_config(args.logdir)
+    selfplay_worker = _init_selfplay(args.logdir, args.device)
+    training_worker = _init_training(args.logdir, args.device)
+    for _ in range(config.training['num_steps']):
+        selfplay_worker.play_game()
+        training_worker.process_batch()
+
+
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('-o', '--logdir',
@@ -97,12 +106,7 @@ if __name__ == '__main__':
     # TODO: Properly break after num_steps training iterations
     # TODO: Kill workers when training is done
     if args.num_selfplay_workers == 0:
-        config = load_config(args.logdir)
-        selfplay_worker = _init_selfplay(args.logdir, args.device)
-        training_worker = _init_training(args.logdir, args.device)
-        for _ in range(config.training['num_steps']):
-            selfplay_worker.play_game()
-            training_worker.process_batch()
+        _synchronous_play_and_train(args.logdir, args.device)
     else:
         # 1. Launch N self-play workers in new processes
         selfplay_ctx = mp.spawn(fn=_selfplay,

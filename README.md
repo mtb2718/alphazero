@@ -6,7 +6,7 @@
 
 ```bash
 conda create -n alphazero python=3.7
-source activate alphazero
+conda activate alphazero
 ```
 
 ### Install PyTorch
@@ -50,9 +50,38 @@ before starting training, or alternatively follow the instructions
 in the [Redis quickstart guide](https://redis.io/topics/quickstart)
 to finish by installing and daemonizing the server (recommended).
 
+### Install Connect4 Solver (Required for Connect4 Evaluation)
+
+Tic-tac-toe and Connect4 are strongly solved games, meaning that for any board position
+the best possible move(s) and the relative strength of each possible move are known
+a priori. As such, these games make for especially enlightening testbeds, as we can
+accurately evaluate both the predictions from our neural network models and the quality
+of the training targets produced by self-play. Solving tic-tac-toe is trivial, included
+in tictactoe.py in < 50 lines of code. In Connect4, quite a bit more effort is required to solve positions
+efficiently, so we rely on an existing open-source solver by Pascal Pons.
+
+Clone and build the [Connect4 solver](https://github.com/PascalPons/connect4).
+
+```bash
+git clone https://github.com/PascalPons/connect4.git
+cd connect4
+make c4solver
+```
+
+The solver optionally makes use of a "book" of precomputed solutions, which decreases solve
+times by orders of magnitude.
+[Download the book of precomputed solutions](https://github.com/PascalPons/connect4/releases/download/book/7x6.book).
+
+Our ConnectFour class's `solve()` method assumes both the solver and book are "installed" in your system:
+
+```bash
+sudo cp c4solver /usr/local/bin/
+sudo cp 7x6.book /usr/local/bin/
+```
+
 ### Run Tests
 
-Finally, confirm that everything is working as expected by running included unit tests:
+Finally, confirm that everything is working as expected by running the included unit tests:
 
 ```bash
 pytest

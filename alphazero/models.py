@@ -77,7 +77,7 @@ class AlphaZero(nn.Module):
         self._policy_head = PolicyHead((block_channels, *shape_in[1:]), shape_out)
         self._value_head = ValueHead((block_channels, *shape_in[1:]))
 
-    def forward(self, x):
+    def forward(self, x, p_valid):
         x = self._cbr(x)
         x = self._tower(x)
         p = self._policy_head(x)
@@ -91,25 +91,3 @@ class UniformModel(nn.Module):
         p = torch.ones_like(p_valid, dtype=torch.float32)
         v = torch.zeros(B, 1, dtype=torch.float32, device=x.device)
         return p, v
-
-
-class AlphaZeroLoss(nn.Module):
-
-    def forward(self, p, z, p_hat, v_hat, p_valid):
-        B = p.shape[0]
-
-        # Calculate loss
-        # Value estimate
-        value_loss = ((z - v_hat) ** 2).mean()
-
-        # Prior policy
-        assert torch.all(torch.abs(p.sum(dim=1) - 1.) < 1e-6), \
-            f'Target prior must be a valid distribution. Got: {p}'
-
-        # XXX: properly implement a masked cross-entropy loss
-        p_hat[~p_valid] = -999.
-        logp_hat = torch.nn.functional.log_softmax(p_hat, dim=1)
-        prior_loss = -torch.sum(p * logp_hat, dim=1)
-        prior_loss = prior_loss.mean()
-
-        return prior_loss, value_loss

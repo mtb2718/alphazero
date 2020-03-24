@@ -117,17 +117,20 @@ def test_dataloader(tmp_path):
     with pytest.raises(StopIteration):
         batch = next(batch_iter)
 
-    for i in range(20):
+    N_games = 5
+    N_batches = 10
+
+    for i in range(N_games):
         dataset.add_game(game, i)
 
-    assert len(dataset) == 20 * len(GAME_HISTORY)
+    assert len(dataset) == N_games * len(GAME_HISTORY)
     batch_iter = iter(dataloader)
     batch = next(batch_iter)
     assert batch['x'].shape[0] == 8
 
     sampler.bufferlen = 8
     states_seen = set()
-    for _ in range(100):
+    for _ in range(N_batches):
         batch = next(batch_iter)
         game_nums = batch['game_index'].tolist()
         move_nums = batch['move_index'].tolist()
@@ -161,10 +164,13 @@ def test_dataloader_with_workers(tmp_path):
     with pytest.raises(StopIteration):
         batch = next(batch_iter)
 
-    for i in range(20):
+    N_games = 10
+    N_batches = 20
+
+    for i in range(N_games):
         dataset.add_game(game, i)
 
-    assert len(dataset) == 20 * len(GAME_HISTORY)
+    assert len(dataset) == N_games * len(GAME_HISTORY)
     batch_iter = iter(dataloader)
     batch = next(batch_iter)
     assert batch['x'].shape[0] == 8
@@ -172,7 +178,7 @@ def test_dataloader_with_workers(tmp_path):
     sampler.bufferlen = 8
     [next(batch_iter) for _ in range(16)] # Flush pre-loaded data
     states_seen = set()
-    for _ in range(100):
+    for _ in range(N_batches):
         batch = next(batch_iter)
         game_nums = batch['game_index'].tolist()
         move_nums = batch['move_index'].tolist()
@@ -182,7 +188,7 @@ def test_dataloader_with_workers(tmp_path):
     assert len(states_seen) == sampler.bufferlen
 
     sampler.bufferlen = 4
-    [next(batch_iter) for _ in range(16)] # Flush pre-loaded data
+    [next(batch_iter) for _ in range(8)] # Flush pre-loaded data
     batch = next(batch_iter)
     game_nums = batch['game_index'].tolist()
     move_nums = batch['move_index'].tolist()

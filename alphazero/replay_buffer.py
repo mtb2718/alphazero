@@ -82,6 +82,10 @@ class SelfPlayDatabase(sqlite3.Connection):
         cur = self.execute("SELECT COUNT(*) FROM game_states;")
         return cur.fetchone()[0]
 
+    def num_distinct_games(self):
+        cur = self.execute("SELECT COUNT(DISTINCT history) FROM selfplay_games;")
+        return cur.fetchone()[0]
+
 
 def make_forksafe(method):
     """Decorator for RepalyBufferDataset methods that make use of a database
@@ -126,22 +130,31 @@ class ReplayBufferDataset(Dataset):
         p[game.valid_actions] = n / np.sum(n)
 
         # Mask of valid actions
-        m = np.zeros(game.NUM_ACTIONS, np.bool)
-        m[game.valid_actions] = True
+        valid_actions_mask = np.zeros(game.NUM_ACTIONS, np.bool)
+        valid_actions_mask[game.valid_actions] = True
 
         # Target for the value of the game state is the final outcome of the
         # game, from the perspective of the next player to move.
         next_player = move_index % 2
         z = np.array([finished_game.terminal_value(next_player)], dtype=np.float32)
 
+        # True value and optimal prior for solved games, to be used in evaluation.
+        move_scores, v_star = np.zeros_like(valid_actions_mask, dtype=np.float32), 0
+        solution = game.solve()
+        if solution is not None:
+            move_scores[game.valid_actions], v_star = solution
+
         return {
             'x': x,
             'z': z,
             'p': p,
-            'p_valid': m,
+            'p_valid': valid_actions_mask,
             'game_index': game_index,
             'move_index': move_index,
             'model_version': model_version,
+            'solved': np.array([solution is not None], dtype=np.bool),
+            'v*': np.array([v_star], dtype=np.float32),
+            'move_scores': move_scores,
         }
 
     @make_forksafe
@@ -152,6 +165,11 @@ class ReplayBufferDataset(Dataset):
     def add_game(self, game, model_version):
         assert game.terminal
         self._db.write_game(game, model_version)
+
+    @property
+    @make_forksafe
+    def db(self):
+        return self._db
 
 
 class ReplayBufferSampler(Sampler):

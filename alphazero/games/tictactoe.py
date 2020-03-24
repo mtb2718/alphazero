@@ -4,23 +4,6 @@ import numpy as np
 import torch
 
 from alphazero.game import Game
-from alphazero.models import AlphaZero, AlphaZeroLoss
-
-
-class AlphaZeroTTT(AlphaZero):
-    def __init__(self, num_blocks, channels_per_block):
-        super(AlphaZeroTTT, self).__init__(shape_in=(2, 3, 3),
-                                           shape_out=(9,),
-                                           num_blocks=num_blocks,
-                                           block_channels=channels_per_block)
-
-    def forward(self, x, p_valid):
-        p, v = super(AlphaZeroTTT, self).forward(x)
-        return p, v
-
-
-class AlphaZeroTTTLoss(AlphaZeroLoss):
-    pass
 
 
 class TicTacToe(Game):
@@ -87,3 +70,48 @@ class TicTacToe(Game):
         s += '-' * 11 + '\n'
         s += ' ' + ' | '.join(tui[6:9])
         return s
+
+    def solve(self):
+        BOOK = {
+            ():   (0, [ 0,  0,  0,  0,  0,  0,  0,  0,  0]),
+            (0,): (0, [    -2, -2, -2,  0, -2, -2, -2, -2]),
+            (1,): (0, [ 0,      0, -2,  0, -2, -2,  0, -2]),
+            (2,): (0, [-2, -2,     -2,  0, -2, -2, -2, -2]),
+            (3,): (0, [ 0, -2, -2,      0,  0,  0, -2, -2]),
+            (4,): (0, [ 0, -2,  0, -2,     -2,  0, -2,  0]),
+            (5,): (0, [-2, -2,  0,  0,  0,     -2, -2,  0]),
+            (6,): (0, [-2, -2, -2, -2,  0, -2,     -2, -2]),
+            (7,): (0, [-2,  0, -2, -2,  0, -2,  0,      0]),
+            (8,): (0, [-2, -2, -2, -2,  0, -2, -2, -2    ]),
+        }
+        def minimax(game, root_depth=None, book={}):
+            if root_depth is None:
+                root_depth = len(game)
+
+            if tuple(game.history) in book:
+                return book[tuple(game.history)]
+
+            root_player = root_depth % 2
+            cur_player = len(game) % 2
+
+            if game.terminal:
+                nmoves = 5 - len(game) // 2
+                outcome = game.terminal_value(root_player)
+                return nmoves * outcome, []
+
+            scores = []
+            for a in game.valid_actions:
+                sub_game = game.clone()
+                sub_game.take_action(a)
+                s, _ = minimax(sub_game, root_depth, book)
+                scores.append(s)
+
+            if cur_player == root_player:
+                s = max(scores)
+            else:
+                s = min(scores)
+            return s, scores
+
+        s, scores = minimax(self, book=BOOK)
+        v = 1 if s > 0 else -1 if s < 0 else 0
+        return scores, v

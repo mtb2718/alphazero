@@ -1,3 +1,5 @@
+import torch
+import torch.nn.functional as F
 from torch.optim import SGD
 from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import DataLoader
@@ -61,11 +63,35 @@ class TrainingWorker:
         # Publish latest model
         self._model_server.update(self._model, train_iter + 1)
 
-        # Log stats
-        # TODO: Make summary logging a globally available.
-        #       Then loss can return only a single value to backprop.
-        self._summary_writer.add_scalar('total_loss', total_loss, train_iter)
-        self._summary_writer.add_scalar('value_loss', value_loss, train_iter)
-        self._summary_writer.add_scalar('prior_loss', prior_loss, train_iter)
-        self._summary_writer.add_scalar('learning_rate', self._lr_schedule.get_lr()[0], train_iter)
+        # Log training stats
+        self._summary_writer.add_scalar('loss/prior', prior_loss, train_iter)
+        self._summary_writer.add_scalar('loss/value', value_loss, train_iter)
+        self._summary_writer.add_scalar('loss/total', total_loss, train_iter)
+        self._summary_writer.add_scalar('learning_rate', self._lr_schedule.get_last_lr()[0], train_iter)
+
+        # Log eval stats
+        if torch.any(batch['solved']):
+            with torch.no_grad():
+                move_scores = batch['move_scores']
+                p_star = F.softmax(move_scores, dim=1)
+                v_star = batch['v*']
+                targ_prior_loss, targ_value_loss = self._loss(p_star, v_star, p, z, p_valid)
+                pred_prior_loss, pred_value_loss = self._loss(p_star, v_star, p_hat, v_hat, p_valid)
+                self._summary_writer.add_scalar('eval/target_value_loss', targ_value_loss, train_iter)
+                self._summary_writer.add_scalar('eval/target_prior_loss', targ_prior_loss, train_iter)
+                self._summary_writer.add_scalar('eval/prediction_value_loss', pred_value_loss, train_iter)
+                self._summary_writer.add_scalar('eval/prediction_prior_loss', pred_prior_loss, train_iter)
+
+                # ^^ Above are eval of current batch
+                # TODO: Add separate eval for specific opening / end game states
+
+        # System state logging
+        Gtotal = self._dataset.db.num_games()
+        Gdistinct = self._dataset.db.num_distinct_games()
+        L = self._dataset.db.num_states()
+        self._summary_writer.add_scalar('data/total_games', Gtotal, train_iter)
+        self._summary_writer.add_scalar('data/distinct_games', Gdistinct, train_iter)
+        self._summary_writer.add_scalar('data/total_states', L, train_iter)
+
+
         return True

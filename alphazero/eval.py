@@ -55,7 +55,7 @@ class AlphaZeroPlayer(Player):
     def get_action(self):
         if self._debug:
             print(self._game)
-        run_mcts(self._game, self._tree, self._model, 16, epsilon=0)
+        run_mcts(self._game, self._tree, self._model, 128, epsilon=0)
         if self._debug:
             N = self._tree.num_visits
             P = self._tree.action_prior

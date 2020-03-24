@@ -1,10 +1,11 @@
 from itertools import product
+import subprocess as sp
 
 import numpy as np
 from scipy.signal import convolve2d
 import torch
 
-from alphazero.models import AlphaZero, AlphaZeroLoss
+from alphazero.models import AlphaZero
 from alphazero.game import Game
 
 
@@ -20,7 +21,7 @@ class AlphaZeroC4(AlphaZero):
                                           block_channels=channels_per_block)
 
     def forward(self, x, p_valid):
-        p, v = super(AlphaZeroC4, self).forward(x)
+        p, v = super(AlphaZeroC4, self).forward(x, p_valid)
         filled_cells = torch.sum(x, dim=1)
         assert torch.all((filled_cells == 0) | (filled_cells == 1))
         next_row_in_col = torch.sum(filled_cells, dim=1).long()
@@ -28,7 +29,7 @@ class AlphaZeroC4(AlphaZero):
         assert torch.all(valid_actions_mask == p_valid)
 
         # Mask invalid grid cells, squash to BxA
-        # XXX: Should be a fancy vectorized way to do this
+        # TODO: Should be a fancy vectorized way to do this
         B = p.shape[0]
         valid_cells = torch.zeros_like(p)
         for b, c in product(range(B), range(GRID_WIDTH)):
@@ -38,10 +39,6 @@ class AlphaZeroC4(AlphaZero):
         p *= valid_cells
         p = torch.sum(p, dim=1)
         return p, v
-
-
-class AlphaZeroC4Loss(AlphaZeroLoss):
-    pass
 
 
 class ConnectFour(Game):
@@ -115,3 +112,34 @@ class ConnectFour(Game):
             s += rowstr + '\n'
         s += ' ' + ' '.join([str(i) for i in range(GRID_WIDTH)])
         return s
+
+    def solve(self):
+        SOLVER = '/usr/local/bin/c4solver'
+        BOOK = '/usr/local/bin/7x6.book'
+        assert not self.terminal
+
+        # Calculate value for all possible next states
+        s0 = ''.join([str(a + 1) for a in self.history])
+        input_str = s0 + '\n'
+        for a in self.valid_actions:
+            input_str += s0 + str(a + 1) + '\n' # Actions are 1-indexed in solver
+        proc = sp.run([SOLVER, '-b', BOOK],
+                      input=input_str,
+                      text=True,
+                      stdout=sp.PIPE,
+                      stderr=sp.STDOUT)
+        proc.check_returncode()
+        stdout_lines = proc.stdout.splitlines()
+        get_score = lambda line: int(line.split(' ')[1])
+        scores = []
+        my_score = get_score(stdout_lines[1])
+        for line in stdout_lines[2:]:
+            if len(line) == 0:
+                continue
+            if 'Invalid' in line:
+                score = my_score
+            else:
+                score = -get_score(line)
+            scores.append(score)
+        v = 1 if my_score > 0 else -1 if my_score < 0 else 0
+        return scores, v

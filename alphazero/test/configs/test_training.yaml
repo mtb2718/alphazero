@@ -7,20 +7,20 @@ model:
     kwargs:
         shape_in: [2, 3, 3]
         shape_out: [9]
-        num_blocks: 3
-        block_channels: 16
+        num_blocks: 1
+        block_channels: 4
 loss:
     module: alphazero.loss
     name: AlphaZeroLoss
 training:
-    num_steps: 10000
-    batch_size: 64
+    num_steps: 4
+    batch_size: 2
     lr: 0.02
     momentum: 0.9
     weight_decay: 1.e-4
     lr_schedule_gamma: 0.1
-    lr_schedule: [500, 2000, 4000]
+    lr_schedule: [1, 2, 3]
 selfplay:
-    num_expansions_per_sim: 32
-    exploration_depth: 3
+    num_expansions_per_sim: 8
+    exploration_depth: 1
     reuse_search_tree: True
