@@ -43,7 +43,7 @@ class TrainingWorker:
         M = max(2 * self._num_workers, 1) * B
         if N < M:
             print(f"Skipping batch, too few examples in replay buffer ({N} < {M}).")
-            return False
+            return 0
         elif self._dataloader is None:
             self._dataloader = DataLoader(self._dataset,
                                         batch_sampler=self._sampler,
@@ -73,7 +73,7 @@ class TrainingWorker:
         self._summary_writer.add_scalar('loss/prior', prior_loss, train_iter)
         self._summary_writer.add_scalar('loss/value', value_loss, train_iter)
         self._summary_writer.add_scalar('loss/total', total_loss, train_iter)
-        self._summary_writer.add_scalar('learning_rate', self._lr_schedule.get_last_lr()[0], train_iter)
+        self._summary_writer.add_scalar('optim/learning_rate', self._lr_schedule.get_last_lr()[0], train_iter)
 
         # Log eval stats
         solved = batch['solved']
@@ -85,13 +85,19 @@ class TrainingWorker:
 
                 targ_prior_loss, targ_value_loss = self._loss(p_star, v_star, p[solved], z[solved], p_valid[solved])
                 pred_prior_loss, pred_value_loss = self._loss(p_star, v_star, p_hat[solved], v_hat[solved], p_valid[solved])
-                self._summary_writer.add_scalar('eval/target_value_loss', targ_value_loss, train_iter)
-                self._summary_writer.add_scalar('eval/target_prior_loss', targ_prior_loss, train_iter)
-                self._summary_writer.add_scalar('eval/prediction_value_loss', pred_value_loss, train_iter)
-                self._summary_writer.add_scalar('eval/prediction_prior_loss', pred_prior_loss, train_iter)
+                self._summary_writer.add_scalar('eval/value_target_loss', targ_value_loss, train_iter)
+                self._summary_writer.add_scalar('eval/prior_target_loss', targ_prior_loss, train_iter)
+                self._summary_writer.add_scalar('eval/value_prediction_loss', pred_value_loss, train_iter)
+                self._summary_writer.add_scalar('eval/prior_prediciton_loss', pred_prior_loss, train_iter)
 
                 # ^^ Above are eval of current batch
                 # TODO: Add separate eval for specific opening / end game states
+
+                # Entropy of predicted and target action distributions
+                Ht = torch.sum(p_valid * p * torch.log(p), axis=1).mean()
+                Hp = torch.sum(p_valid * p_hat * torch.log(p_hat), axis=1).mean()
+                self._summary_writer.add_scalar('eval/prior_target_entropy', Ht, train_iter)
+                self._summary_writer.add_scalar('eval/prior_prediction_entropy', Hp, train_iter)
 
         # System state logging
         Gtotal = self._dataset.db.num_games()
@@ -101,4 +107,4 @@ class TrainingWorker:
         self._summary_writer.add_scalar('data/distinct_games', Gdistinct, train_iter)
         self._summary_writer.add_scalar('data/total_states', L, train_iter)
 
-        return True
+        return train_iter + 1

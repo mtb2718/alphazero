@@ -60,19 +60,25 @@ def _init_selfplay(logdir, device):
 
 
 def _selfplay(i, logdir, device):
+    config = load_config(logdir)
     selfplay_worker = _init_selfplay(logdir, device)
-    game = 1
     while True:
-        game += 1
-        selfplay_worker.play_game()
+        model_version = selfplay_worker.play_game()
+        # Stop selfplay when training is done
+        if model_version >= config.training['num_steps']:
+            break
 
 
 def _train(logdir, device, num_data_workers):
     config = load_config(logdir)
     training_worker = _init_training(logdir, device, num_data_workers)
-    for _ in range(config.training['num_steps']):
-        if not training_worker.process_batch():
+    while True:
+        new_model_ver = training_worker.process_batch()
+        # Haven't yet started training--too few examples available
+        if new_model_ver == 0:
             time.sleep(2)
+        elif new_model_ver >= config.training['num_steps']:
+            break
 
 
 def _synchronous_play_and_train(logdir, device, num_data_workers):
@@ -107,8 +113,6 @@ if __name__ == '__main__':
     init_logdir(args)
 
     # Start training
-    # TODO: Properly break after num_steps training iterations
-    # TODO: Kill workers when training is done
     if args.num_selfplay_workers == 0:
         _synchronous_play_and_train(args.logdir, args.device, args.num_data_workers)
     else:

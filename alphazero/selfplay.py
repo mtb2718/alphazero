@@ -39,3 +39,4 @@ class SelfPlayWorker:
 
         print(f'Player {game.winner} (v{model_version}) wins game after {len(game.history)} turns')
         self._dataset.add_game(game, model_version)
+        return model_version
