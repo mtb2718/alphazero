@@ -140,7 +140,7 @@ class ReplayBufferDataset(Dataset):
 
         # True value and optimal prior for solved games, to be used in evaluation.
         move_scores, v_star = np.zeros_like(valid_actions_mask, dtype=np.float32), 0
-        solution = game.solve()
+        solution = game.solve() if i % 10 == 0 else None
         if solution is not None:
             move_scores[game.valid_actions], v_star = solution
 
@@ -152,8 +152,8 @@ class ReplayBufferDataset(Dataset):
             'game_index': game_index,
             'move_index': move_index,
             'model_version': model_version,
-            'solved': np.array([solution is not None], dtype=np.bool),
-            'v*': np.array([v_star], dtype=np.float32),
+            'solved': solution is not None,
+            'v*': v_star,
             'move_scores': move_scores,
         }
 

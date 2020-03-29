@@ -31,7 +31,7 @@ def init_logdir(args):
         yaml.dump(vars(args), f)
 
 
-def _init_training(logdir, device='cpu'):
+def _init_training(logdir, device, num_data_workers):
     # Create summary writer for tensorboard logging
     summary_writer = SummaryWriter(log_dir=logdir)
 
@@ -42,11 +42,11 @@ def _init_training(logdir, device='cpu'):
     model_server = ModelServer(logdir)
 
     device = torch.device(device)
-    train_worker = TrainingWorker(config, model_server, dataset, summary_writer, device)
+    train_worker = TrainingWorker(config, model_server, dataset, summary_writer, device, num_data_workers)
     return train_worker
 
 
-def _init_selfplay(logdir, device='cpu'):
+def _init_selfplay(logdir, device):
     # Create dataset and model server instances
     config = load_config(logdir)
     dbpath = os.path.join(logdir, 'selfplay.sqlite')
@@ -67,18 +67,18 @@ def _selfplay(i, logdir, device):
         selfplay_worker.play_game()
 
 
-def _train(logdir, device):
+def _train(logdir, device, num_data_workers):
     config = load_config(logdir)
-    training_worker = _init_training(logdir, device)
+    training_worker = _init_training(logdir, device, num_data_workers)
     for _ in range(config.training['num_steps']):
         if not training_worker.process_batch():
             time.sleep(2)
 
 
-def _synchronous_play_and_train(logdir, device):
+def _synchronous_play_and_train(logdir, device, num_data_workers):
     config = load_config(args.logdir)
     selfplay_worker = _init_selfplay(args.logdir, args.device)
-    training_worker = _init_training(args.logdir, args.device)
+    training_worker = _init_training(args.logdir, args.device, num_data_workers)
     for _ in range(config.training['num_steps']):
         selfplay_worker.play_game()
         training_worker.process_batch()
@@ -96,6 +96,10 @@ if __name__ == '__main__':
         type=int,
         default=0,
         help='Number of subprocess selfplay workers (default 0 for no concurrency).')
+    parser.add_argument('-w', '--num-data-workers',
+        type=int,
+        default=0,
+        help='Number of worker processes to use in dataloader.')
     parser.add_argument('-d', '--device',
         default='cpu',
         help='The device to use for training and self-play inference, e.g. \'cuda:0\'. Currently only support for single device')
@@ -106,7 +110,7 @@ if __name__ == '__main__':
     # TODO: Properly break after num_steps training iterations
     # TODO: Kill workers when training is done
     if args.num_selfplay_workers == 0:
-        _synchronous_play_and_train(args.logdir, args.device)
+        _synchronous_play_and_train(args.logdir, args.device, args.num_data_workers)
     else:
         # 1. Launch N self-play workers in new processes
         selfplay_ctx = mp.spawn(fn=_selfplay,
@@ -115,7 +119,7 @@ if __name__ == '__main__':
                                 join=False)
 
         # 2. Train concurrently in main thread
-        _train(args.logdir, args.device)
+        _train(args.logdir, args.device, args.num_data_workers)
 
         # 3. Cleanup
         selfplay_ctx.join()

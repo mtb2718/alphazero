@@ -9,13 +9,16 @@ from alphazero.replay_buffer import ReplayBufferSampler
 
 
 class TrainingWorker:
-    def __init__(self, config, model_server, dataset, summary_writer, device):
+    def __init__(self, config, model_server, dataset, summary_writer, device, num_workers):
 
         self._config = config
-        self._summary_writer = summary_writer
-        self._model = config.Model().to(device)
-        self._device = device
         self._model_server = model_server
+        self._dataset = dataset
+        self._summary_writer = summary_writer
+        self._device = device
+        self._num_workers = num_workers
+
+        self._model = config.Model().to(device)
         self._loss = config.Loss()
 
         self._optimizer = SGD(self._model.parameters(),
@@ -25,25 +28,28 @@ class TrainingWorker:
         self._lr_schedule = MultiStepLR(self._optimizer,
                                         config.training['lr_schedule'],
                                         gamma=config.training['lr_schedule_gamma'])
-        self._dataset = dataset
         # TODO: Replay buffer settings from config
         self._sampler = ReplayBufferSampler(dataset,
                                             batch_size=config.training['batch_size'],
                                             bufferlen=(64 * 1024))
-        self._dataloader = DataLoader(dataset,
-                                      batch_sampler=self._sampler,
-                                      pin_memory=True,
-                                      num_workers=0)
-        self._batch_iter = enumerate(self._dataloader)
+        self._dataloader = None
+        self._batch_iter = None
 
     def process_batch(self):
 
         # Don't update network unless we can make a full batch
         N = len(self._dataset)
         B = self._config.training['batch_size']
-        if N < B:
-            print(f"Skipping batch (batch_size={B}), too few examples in replay buffer ({N}).")
+        M = max(2 * self._num_workers, 1) * B
+        if N < M:
+            print(f"Skipping batch, too few examples in replay buffer ({N} < {M}).")
             return False
+        elif self._dataloader is None:
+            self._dataloader = DataLoader(self._dataset,
+                                        batch_sampler=self._sampler,
+                                        pin_memory=True,
+                                        num_workers=self._num_workers)
+            self._batch_iter = enumerate(self._dataloader)
 
         # Run inference, evaluate loss, backprop
         self._model.train()
@@ -70,13 +76,15 @@ class TrainingWorker:
         self._summary_writer.add_scalar('learning_rate', self._lr_schedule.get_last_lr()[0], train_iter)
 
         # Log eval stats
-        if torch.any(batch['solved']):
+        solved = batch['solved']
+        if torch.any(solved):
             with torch.no_grad():
-                move_scores = batch['move_scores']
+                move_scores = batch['move_scores'][solved].to(self._device)
+                v_star = batch['v*'][solved].to(self._device)
                 p_star = F.softmax(move_scores, dim=1)
-                v_star = batch['v*']
-                targ_prior_loss, targ_value_loss = self._loss(p_star, v_star, p, z, p_valid)
-                pred_prior_loss, pred_value_loss = self._loss(p_star, v_star, p_hat, v_hat, p_valid)
+
+                targ_prior_loss, targ_value_loss = self._loss(p_star, v_star, p[solved], z[solved], p_valid[solved])
+                pred_prior_loss, pred_value_loss = self._loss(p_star, v_star, p_hat[solved], v_hat[solved], p_valid[solved])
                 self._summary_writer.add_scalar('eval/target_value_loss', targ_value_loss, train_iter)
                 self._summary_writer.add_scalar('eval/target_prior_loss', targ_prior_loss, train_iter)
                 self._summary_writer.add_scalar('eval/prediction_value_loss', pred_value_loss, train_iter)
@@ -92,6 +100,5 @@ class TrainingWorker:
         self._summary_writer.add_scalar('data/total_games', Gtotal, train_iter)
         self._summary_writer.add_scalar('data/distinct_games', Gdistinct, train_iter)
         self._summary_writer.add_scalar('data/total_states', L, train_iter)
-
 
         return True
