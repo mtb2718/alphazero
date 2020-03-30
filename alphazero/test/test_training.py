@@ -20,9 +20,10 @@ def test_training(tmp_path):
     dataset = ReplayBufferDataset(config, os.path.join(tmp_path, 'dataset.sqlite'))
     summary_writer = SummaryWriter(tmp_path)
     device = torch.device('cpu')
+    num_workers = 0
 
     selfplay_worker = SelfPlayWorker(config, model_server, dataset, device)
-    training_worker = TrainingWorker(config, model_server, dataset, summary_writer, device)
+    training_worker = TrainingWorker(config, model_server, dataset, summary_writer, device, num_workers)
 
     for _ in range(config.training['num_steps']):
         selfplay_worker.play_game()
