@@ -5,6 +5,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import DataLoader
 
 from alphazero.config import AlphaZeroConfig
+from alphazero.loss import masked_cross_entropy
 from alphazero.replay_buffer import ReplayBufferSampler
 
 
@@ -70,7 +71,7 @@ class TrainingWorker:
         self._model_server.update(self._model, train_iter + 1)
 
         # Log training stats
-        self._summary_writer.add_scalar('loss/prior', prior_loss, train_iter)
+        self._summary_writer.add_scalar('loss/policy', prior_loss, train_iter)
         self._summary_writer.add_scalar('loss/value', value_loss, train_iter)
         self._summary_writer.add_scalar('loss/total', total_loss, train_iter)
         self._summary_writer.add_scalar('optim/learning_rate', self._lr_schedule.get_last_lr()[0], train_iter)
@@ -83,21 +84,24 @@ class TrainingWorker:
                 v_star = batch['v*'][solved].to(self._device)
                 p_star = F.softmax(move_scores, dim=1)
 
-                targ_prior_loss, targ_value_loss = self._loss(p_star, v_star, p[solved], z[solved], p_valid[solved])
-                pred_prior_loss, pred_value_loss = self._loss(p_star, v_star, p_hat[solved], v_hat[solved], p_valid[solved])
-                self._summary_writer.add_scalar('eval/value_target_loss', targ_value_loss, train_iter)
-                self._summary_writer.add_scalar('eval/prior_target_loss', targ_prior_loss, train_iter)
-                self._summary_writer.add_scalar('eval/value_prediction_loss', pred_value_loss, train_iter)
-                self._summary_writer.add_scalar('eval/prior_prediciton_loss', pred_prior_loss, train_iter)
+                logp = torch.log(p)
+                Hpspi, Evsz = self._loss(p_star, v_star, logp[solved], z[solved], p_valid[solved])
+                Hpsph, Evsvh = self._loss(p_star, v_star, p_hat[solved], v_hat[solved], p_valid[solved])
+                self._summary_writer.add_scalar('eval/value_target_mse', Evsz, train_iter)
+                self._summary_writer.add_scalar('eval/value_prediction_mse', Evsvh, train_iter)
+                self._summary_writer.add_scalar('eval/policy_target_xentropy', Hpspi, train_iter)
+                self._summary_writer.add_scalar('eval/policy_prediction_xentropy', Hpsph, train_iter)
 
                 # ^^ Above are eval of current batch
                 # TODO: Add separate eval for specific opening / end game states
 
-                # Entropy of predicted and target action distributions
-                Ht = torch.sum(p_valid * p * torch.log(p), axis=1).mean()
-                Hp = torch.sum(p_valid * p_hat * torch.log(p_hat), axis=1).mean()
-                self._summary_writer.add_scalar('eval/prior_target_entropy', Ht, train_iter)
-                self._summary_writer.add_scalar('eval/prior_prediction_entropy', Hp, train_iter)
+                # Entropy of target policy, from MCTS
+                Ht = masked_cross_entropy(logp, p, p_valid).mean()
+                self._summary_writer.add_scalar('eval/policy_target_entropy', Ht, train_iter)
+
+                # Entropy of policy prediction
+                Hp = masked_cross_entropy(p_hat, F.softmax(p_hat, dim=1), p_valid).mean()
+                self._summary_writer.add_scalar('eval/policy_prediction_entropy', Hp, train_iter)
 
         # System state logging
         Gtotal = self._dataset.db.num_games()
