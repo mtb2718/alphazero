@@ -34,6 +34,7 @@ class PolicyHead(nn.Module):
         )
         self._fc = nn.Linear(2 * np.prod(shape_in[1:]), np.prod(shape_out))
         self._shape_out = shape_out
+        nn.init.zeros_(self._fc.bias)
 
     def forward(self, x):
         x = self._cbr(x)
@@ -57,6 +58,7 @@ class ValueHead(nn.Module):
             nn.Linear(256, 1),
             nn.Tanh(),
         )
+        nn.init.zeros_(self._fc[2].bias)
 
     def forward(self, x):
         x = self._cbr(x)
