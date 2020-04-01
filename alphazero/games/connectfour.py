@@ -103,7 +103,7 @@ class ConnectFour(Game):
         # At any given game state, only the previous player could have won
         board = self.render()[1].reshape(N_SPACES)
         streak_lens = WINNING_POSITIONS @ board
-        if np.max(streak_lens) >= 4:
+        if np.max(streak_lens) >= STREAK_LEN:
             return self.prev_player
 
         if len(self.history) == N_SPACES:
