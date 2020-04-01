@@ -85,9 +85,11 @@ def _synchronous_play_and_train(logdir, device, num_data_workers):
     config = load_config(args.logdir)
     selfplay_worker = _init_selfplay(args.logdir, args.device)
     training_worker = _init_training(args.logdir, args.device, num_data_workers)
-    for _ in range(config.training['num_steps']):
+    while True:
         selfplay_worker.play_game()
-        training_worker.process_batch()
+        new_model_ver = training_worker.process_batch()
+        if new_model_ver >= config.training['num_steps']:
+            break
 
 
 if __name__ == '__main__':
