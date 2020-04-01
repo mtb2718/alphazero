@@ -2,15 +2,46 @@ from itertools import product
 import subprocess as sp
 
 import numpy as np
-from scipy.signal import convolve2d
 import torch
 
 from alphazero.models import AlphaZero
 from alphazero.game import Game
 
-
+# Game rule constants
 GRID_WIDTH = 7
 GRID_HEIGHT = 6
+STREAK_LEN = 4
+assert STREAK_LEN == 4, 'Only ConnectFour supported.'
+N_SPACES = GRID_HEIGHT * GRID_WIDTH
+
+# Precompute winning positions for fast game state evaluation
+N_HORIZONTAL_WINS = GRID_HEIGHT * (GRID_WIDTH - STREAK_LEN + 1)
+N_VERTICAL_WINS = GRID_WIDTH * (GRID_HEIGHT - STREAK_LEN + 1)
+N_DIAG_WINS = 2 * (GRID_WIDTH - STREAK_LEN + 1) * (GRID_HEIGHT - STREAK_LEN + 1)
+NUM_WINNING_POSITIONS = N_HORIZONTAL_WINS + N_VERTICAL_WINS + N_DIAG_WINS
+
+WINNING_POSITIONS = np.zeros((NUM_WINNING_POSITIONS, N_SPACES), dtype=np.uint8)
+n = 0
+for row, col in product(range(GRID_HEIGHT), range(GRID_WIDTH)):
+    l_right = col <= GRID_WIDTH - STREAK_LEN
+    l_above = row <= GRID_HEIGHT - STREAK_LEN
+    # horizontal wins
+    if l_right:
+        for i in range(STREAK_LEN):
+            WINNING_POSITIONS[n, row * GRID_WIDTH + col + i] = 1
+        n += 1
+    # vertical wins
+    if l_above:
+        for i in range(STREAK_LEN):
+            WINNING_POSITIONS[n, (row + i) * GRID_WIDTH + col] = 1
+        n += 1
+    # diagonal wins
+    if l_right and l_above:
+        for i in range(STREAK_LEN):
+            WINNING_POSITIONS[n + 0, (row + i) * GRID_WIDTH + col + i] = 1
+            WINNING_POSITIONS[n + 1, (row + STREAK_LEN - i - 1) * GRID_WIDTH + col + i] = 1
+        n += 2
+assert np.all(np.sum(WINNING_POSITIONS, axis=1) == STREAK_LEN)
 
 
 class AlphaZeroC4(AlphaZero):
@@ -51,10 +82,10 @@ class ConnectFour(Game):
 
     @property
     def terminal(self):
-        if len(self.history) == GRID_WIDTH * GRID_HEIGHT:
-            return True
-        elif len(self.history) < 7:
+        if len(self.history) < 2 * STREAK_LEN - 1:
             return False
+        if len(self.history) == N_SPACES:
+            return True
         return self.winner is not None
 
     @property
@@ -66,25 +97,17 @@ class ConnectFour(Game):
             the index of the winning player or -1 for a draw.
         """
 
-        h0 = np.ones((1, 4))
-        h1 = np.ones((4, 1))
-        h2 = np.eye(4)
-        h3 = np.eye(4)[::-1]
+        if len(self.history) < 2 * STREAK_LEN - 1:
+            return None
 
-        board = self.render()
-        win_channel = None
-        winner = None
-        for c, h in product([0, 1], [h0, h1, h2, h3]):
-            if np.any(convolve2d(board[c], h, 'valid') >= 4):
-                assert winner is None or winner == p, 'Game cannot have multiple winners.'
-                win_channel = c
-        if win_channel is None and len(self.valid_actions) == 0:
-            return -1
-        elif win_channel == 1:
+        # At any given game state, only the previous player could have won
+        board = self.render()[1].reshape(N_SPACES)
+        streak_lens = WINNING_POSITIONS @ board
+        if np.max(streak_lens) >= 4:
             return self.prev_player
-        elif win_channel == 0:
-            assert False, "Previous player's move can never result in loss"
-        return None
+
+        if len(self.history) == N_SPACES:
+            return -1
 
     def render(self):
         board = np.zeros((2, GRID_HEIGHT, GRID_WIDTH), dtype=np.float32)
@@ -99,13 +122,15 @@ class ConnectFour(Game):
     def __str__(self):
         s = ''
         board = self.render()
+        c0 = 'X' if self.next_player == 0 else 'O'
+        c1 = 'X' if self.prev_player == 0 else 'O'
         for r in reversed(range(GRID_HEIGHT)):
             rowstr = '|'
             for c in range(GRID_WIDTH):
                 if board[0, r, c] > 0:
-                    rowstr += 'X'
+                    rowstr += c0
                 elif board[1, r, c] > 0:
-                    rowstr += 'O'
+                    rowstr += c1
                 else:
                     rowstr += ' '
                 rowstr += '|'
