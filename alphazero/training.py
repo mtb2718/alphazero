@@ -96,6 +96,9 @@ class TrainingWorker:
                 # TODO: Add separate eval for specific opening / end game states
 
                 # Entropy of target policy, from MCTS
+                # Protect against log(0) resulting in nan
+                m = p_valid * (logp < -1e4)
+                logp[m] = -999.
                 Ht = masked_cross_entropy(logp, p, p_valid).mean()
                 self._summary_writer.add_scalar('eval/policy_target_entropy', Ht, train_iter)
 
