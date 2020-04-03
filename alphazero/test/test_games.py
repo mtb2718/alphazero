@@ -1,6 +1,69 @@
+import numpy as np
 
 from alphazero.games.tictactoe import TicTacToe
 from alphazero.games.connectfour import ConnectFour
+
+
+def test_connect_four():
+
+    # History of a game with perfect play from both sides
+    # From: https://connect4.gamesolver.org/?pos=44444666641267222263721335117357537731155
+    # Note actions are 1-indexed
+    PERFECT_GAME = '44444666641267222263721335117357537731155'
+    actions = [int(c) - 1 for c in PERFECT_GAME]
+
+    # Test outputs are all as expected for a long game
+    game = ConnectFour()
+    for i, a in enumerate(actions):
+        print(game)
+        assert a in game.valid_actions
+        assert not game.terminal
+        assert game.winner is None
+        board = game.render()
+        assert np.sum(board) == i
+        assert np.sum(board[1]) - np.sum(board[0]) == i % 2
+        s = str(game)
+        assert s.count('X') == (i + 1) // 2
+        assert s.count('O') == i // 2
+        game.take_action(a)
+    print(game)
+    assert game.terminal
+    assert game.winner == 0
+
+    # Test 'winner' returns correct answer for a handful of positions
+    TEST_GAME_POSITIONS = [
+        # Vertical wins
+        {'winner': 0, 'history': [0,1,0,1,0,1,0]},
+        {'winner': 1, 'history': [3,0,1,0,1,0,1,0]},
+        {'winner': 0, 'history': [6,1,6,1,6,1,6]},
+        {'winner': 1, 'history': [3,6,1,6,1,6,1,6]},
+        {'winner': 0, 'history': [3,3,3,2,3,2,3,2,3]},
+        # Horizontal wins
+        {'winner': 0, 'history': [0,0,1,1,2,2,3]},
+        {'winner': 1, 'history': [4,0,0,1,1,2,2,3]},
+        {'winner': 0, 'history': [6,6,5,5,4,4,3]},
+        {'winner': 1, 'history': [0,6,6,5,5,4,4,3]},
+        # Connect more-than-4
+        {'winner': 0, 'history': [6,6,5,5,4,4,0,0,1,1,2,2,3]},
+        {'winner': 1, 'history': [6,6,6,5,5,4,4,0,0,1,1,2,2,3]},
+        # Diagonal wins, ascending
+        {'winner': 0, 'history': [0,1,1,3,2,2,2,2,3,3,3]},
+        {'winner': 1, 'history': [4,0,1,1,3,2,2,2,2,3,3,3]},
+        {'winner': 0, 'history': [3,4,4,6,5,5,5,5,6,6,6]},
+        {'winner': 1, 'history': [1,3,4,4,6,5,5,5,5,6,6,6]},
+        # Diagonal wins, descending
+        {'winner': 0, 'history': [1,0,0,0,0,2,2,1,1,5,3]},
+        {'winner': 1, 'history': [0,0,0,0,1,1,2,1,5,2,5,3]},
+    ]
+
+    for pos in TEST_GAME_POSITIONS:
+        game = ConnectFour(pos['history'][:-1])
+        assert not game.terminal
+        assert game.winner is None
+        game.take_action(pos['history'][-1])
+        print(game)
+        assert game.terminal
+        assert game.winner == pos['winner']
 
 
 def test_tic_tac_toe_solver():
