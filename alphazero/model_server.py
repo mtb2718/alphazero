@@ -7,7 +7,7 @@ import torch
 class ModelServer:
 
     def __init__(self, logdir, host='localhost', port=6379, db=0, ckpt_period=50):
-        self._ckpt_dir = os.path.join(self._logdir, 'ckpt')
+        self._ckpt_dir = os.path.join(logdir, 'ckpt')
         os.makedirs(self._ckpt_dir, exist_ok=True)
         self._ckpt_period = ckpt_period
         self._redis = Redis(host=host, port=port, db=db)
