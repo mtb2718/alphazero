@@ -9,6 +9,14 @@ conda create -n alphazero python=3.7
 conda activate alphazero
 ```
 
+### Clone and setup repo
+
+```bash
+git clone https://github.com/mtb2718/alphazero.git
+cd alphazero
+pip install -e .
+```
+
 ### Install PyTorch
 
 See [PyTorch website](https://pytorch.org/get-started/locally/#start-locally)
@@ -50,7 +58,7 @@ before starting training, or alternatively follow the instructions
 in the [Redis quickstart guide](https://redis.io/topics/quickstart)
 to finish by installing and daemonizing the server (recommended).
 
-### Install Connect4 Solver (Required for Connect4 Evaluation)
+### Install Connect4 solver (required for Connect4 evaluation)
 
 Tic-tac-toe and Connect4 are strongly solved games, meaning that for any board position
 the best possible move(s) and the relative strength of each possible move are known
@@ -79,7 +87,7 @@ sudo cp c4solver /usr/local/bin/
 sudo cp 7x6.book /usr/local/bin/
 ```
 
-### Run Tests
+### Run tests
 
 Finally, confirm that everything is working as expected by running the included unit tests:
 
