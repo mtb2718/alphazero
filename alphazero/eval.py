@@ -129,7 +129,7 @@ def play(game, players, show=False):
 
 
 def load_ckpt(ckpt):
-    config_path = os.path.join(os.path.dirname(ckpt), 'config.yaml')
+    config_path = os.path.join(os.path.dirname(ckpt), '../config.yaml')
     config = AlphaZeroConfig(config_path)
     model = config.Model()
     checkpoint = torch.load(ckpt)
