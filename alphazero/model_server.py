@@ -7,7 +7,8 @@ import torch
 class ModelServer:
 
     def __init__(self, logdir, host='localhost', port=6379, db=0, ckpt_period=50):
-        self._logdir = logdir
+        self._ckpt_dir = os.path.join(self._logdir, 'ckpt')
+        os.makedirs(self._ckpt_dir, exist_ok=True)
         self._ckpt_period = ckpt_period
         self._redis = Redis(host=host, port=port, db=db)
 
@@ -26,7 +27,7 @@ class ModelServer:
 
         # Periodically keep a checkpoint in the logdir
         if self._ckpt_period > 0 and version % self._ckpt_period == 0:
-            self.checkpoint(self._logdir, model, version)
+            self.checkpoint(self._ckpt_dir, model, version)
 
     def latest(self, model):
 
@@ -44,4 +45,4 @@ class ModelServer:
             'model_state_dict': model.state_dict(),
             # TODO: Move checkpointing to an outside utility
             #'optimizer_state_dict': optimizer.state_dict(),
-        }, f'{dirname}/ckpt.{version:06d}.pt')
+        }, f'{dirname}/{version:06d}.pt')
