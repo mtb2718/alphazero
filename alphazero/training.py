@@ -63,9 +63,9 @@ class TrainingWorker:
         z = batch['z'].to(self._device)
         p_valid = batch['p_valid'].to(self._device)
         p_hat, v_hat = self._model(x, p_valid)
-        prior_loss, value_loss = self._loss(p, z, p_hat, v_hat, p_valid)
+        policy_loss, value_loss = self._loss(p, z, p_hat, v_hat, p_valid)
         self._optimizer.zero_grad()
-        total_loss = prior_loss + value_loss
+        total_loss = policy_loss + value_loss
         total_loss.backward()
         self._optimizer.step()
         self._lr_schedule.step()
@@ -74,10 +74,13 @@ class TrainingWorker:
         self._model_server.update(self._model, train_iter + 1)
 
         # Log training stats
-        self._summary_writer.add_scalar('loss/policy', prior_loss, train_iter)
+        self._summary_writer.add_scalar('loss/policy', policy_loss, train_iter)
         self._summary_writer.add_scalar('loss/value', value_loss, train_iter)
         self._summary_writer.add_scalar('loss/total', total_loss, train_iter)
         self._summary_writer.add_scalar('optim/learning_rate', self._lr_schedule.get_last_lr()[0], train_iter)
+
+        if train_iter % 10 == 0:
+            print(f'Step: {train_iter}, policy loss: {policy_loss}, value_loss: {value_loss}, total loss: {total_loss}')
 
         # Log eval stats
         solved = batch['solved']
