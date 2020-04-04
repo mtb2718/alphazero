@@ -1,4 +1,4 @@
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 import os
 import shutil
 import time
@@ -17,16 +17,16 @@ from alphazero.training import TrainingWorker
 
 def load_config(logdir):
     # Load config file
-    config_path = os.path.join(logdir, 'config.yaml')
-    config = AlphaZeroConfig(config_path)
-    return config
+    config = AlphaZeroConfig(os.path.join(logdir, 'config.yaml'))
+    with open(os.path.join(logdir, 'args.yaml')) as f:
+        args = Namespace(**yaml.safe_load(f))
+    return args, config
 
 
 def init_logdir(args):
     # Create logdir and save copy of config and args for posterity
     os.makedirs(args.logdir)
-    conf_path = os.path.join(args.logdir, 'config.yaml')
-    shutil.copyfile(args.config, conf_path)
+    shutil.copyfile(args.config, os.path.join(args.logdir, 'config.yaml'))
     with open(os.path.join(args.logdir, 'args.yaml'), 'w') as f:
         yaml.dump(vars(args), f)
 
@@ -36,9 +36,9 @@ def _init_training(logdir, device, num_data_workers):
     summary_writer = SummaryWriter(log_dir=logdir)
 
     # Create dataset and model server instances
-    config = load_config(logdir)
-    dbpath = os.path.join(logdir, 'selfplay.sqlite')
-    dataset = ReplayBufferDataset(config, dbpath)
+    args, config = load_config(logdir)
+    selfplay_db = args.selfplay_db or os.path.join(logdir, 'selfplay.sqlite')
+    dataset = ReplayBufferDataset(config, selfplay_db)
     model_server = ModelServer(logdir)
 
     device = torch.device(device)
@@ -48,7 +48,7 @@ def _init_training(logdir, device, num_data_workers):
 
 def _init_selfplay(logdir, device):
     # Create dataset and model server instances
-    config = load_config(logdir)
+    args, config = load_config(logdir)
     dbpath = os.path.join(logdir, 'selfplay.sqlite')
     dataset = ReplayBufferDataset(config, dbpath)
     model_server = ModelServer(logdir)
@@ -60,7 +60,9 @@ def _init_selfplay(logdir, device):
 
 
 def _selfplay(i, logdir, device):
-    config = load_config(logdir)
+    args, config = load_config(logdir)
+    if args.selfplay_db is None:
+        return
     selfplay_worker = _init_selfplay(logdir, device)
     while True:
         model_version = selfplay_worker.play_game()
@@ -70,7 +72,7 @@ def _selfplay(i, logdir, device):
 
 
 def _train(logdir, device, num_data_workers):
-    config = load_config(logdir)
+    args, config = load_config(logdir)
     training_worker = _init_training(logdir, device, num_data_workers)
     while True:
         new_model_ver = training_worker.process_batch()
@@ -82,11 +84,13 @@ def _train(logdir, device, num_data_workers):
 
 
 def _synchronous_play_and_train(logdir, device, num_data_workers):
-    config = load_config(args.logdir)
-    selfplay_worker = _init_selfplay(args.logdir, args.device)
+    args, config = load_config(logdir)
+    if args.selfplay_db is None:
+        selfplay_worker = _init_selfplay(args.logdir, args.device)
     training_worker = _init_training(args.logdir, args.device, num_data_workers)
     while True:
-        selfplay_worker.play_game()
+        if args.selfplay_db is None:
+            selfplay_worker.play_game()
         new_model_ver = training_worker.process_batch()
         if new_model_ver >= config.training['num_steps']:
             break
@@ -100,6 +104,10 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--config',
         required=True,
         help="Path to training config yaml file.")
+    parser.add_argument('--selfplay-db',
+        default=None,
+        help='Load training examples from game database instead of live self-play.')
+    # TODO: DB Sampling strategies - exponential, curriculum
     parser.add_argument('-n', '--num-selfplay-workers',
         type=int,
         default=0,
@@ -112,6 +120,7 @@ if __name__ == '__main__':
         default='cpu',
         help='The device to use for training and self-play inference, e.g. \'cuda:0\'. Currently only support for single device')
     args = parser.parse_args()
+
     init_logdir(args)
 
     # Start training
