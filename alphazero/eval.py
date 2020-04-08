@@ -41,6 +41,7 @@ class AlphaZeroPlayer(Player):
     # TODO: Merge this with the SelfPlayWorker class and add .train()/.eval() mode?
     def __init__(self, model, debug=False):
         super(AlphaZeroPlayer, self).__init__()
+        self.exploration = 0
         self._model = model
         self._debug = debug
         self._game = None
@@ -60,7 +61,10 @@ class AlphaZeroPlayer(Player):
             P = self._tree.action_prior
             print(f'Num visits ({np.sum(N)}): {N}')
             print(f'Action Prior: {P}')
-        action_index = self._tree.greedy_action()
+        if self.exploration > 0:
+            action_index = self._tree.sample_action(self.exploration)
+        else:
+            action_index = self._tree.greedy_action()
         self._tree = self._tree.traverse(action_index)
         self._tree.kill_siblings()
         action = self._game.valid_actions[action_index]
