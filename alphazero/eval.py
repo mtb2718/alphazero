@@ -8,6 +8,7 @@ import torch
 from alphazero.config import AlphaZeroConfig
 from alphazero.mcts import MCTreeNode, run_mcts
 
+np.set_printoptions(suppress=True)
 
 class Player: # TODO: ABC
     def __init__(self):
@@ -77,20 +78,33 @@ class AlphaZeroPlayer(Player):
 
 
 class SolverPlayer(Player):
-    def __init__(self):
+    def __init__(self, temperature=None, debug=False):
         super(SolverPlayer, self).__init__()
         self._game = None
+        assert temperature is None or temperature > 0
+        self._temperature = temperature
+        self._debug = debug
 
     def set_game(self, game):
         self._game = game
 
     def get_action(self):
         scores, _ = self._game.solve()
-        best_score = np.max(scores)
-        indices = np.argwhere(scores == best_score)
-        i = np.random.choice(indices.reshape(-1))
-        a = self._game.valid_actions[i]
-        return a, None
+        valid_actions = self._game.valid_actions
+        if self._debug:
+            print('Move scores:', scores)
+        if self._temperature is None:
+            best_score = np.max(scores)
+            indices = np.argwhere(scores == best_score)
+            i = np.random.choice(indices.reshape(-1))
+            action = valid_actions[i]
+        else:
+            scores = torch.tensor(scores, dtype=torch.float32)
+            p = torch.nn.functional.softmax(scores / self._temperature, dim=0).numpy()
+            action = np.random.choice(valid_actions, p=p)
+            if self._debug:
+                print('Sample likelihood:', p)
+        return action, None
 
 
 def play(game, players, show=False):
@@ -104,6 +118,8 @@ def play(game, players, show=False):
     while not game.terminal:
         player = players[game.next_player]
         if show:
+            print('\nMoves taken:', len(game.history))
+            print('---------------\n')
             print(game)
         action, game_control = player.get_action()
 
@@ -125,11 +141,11 @@ def play(game, players, show=False):
             continue
 
     if show:
-        print(game)
         if game.winner >= 0:
-            print(f'Player {game.winner} wins!')
+            print(f'\nPlayer {game.winner} wins!\n')
         else:
-            print('Game drawn!')
+            print('\nGame drawn!\n')
+        print(game)
 
 
 def load_ckpt(ckpt):
@@ -144,10 +160,12 @@ def load_ckpt(ckpt):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('-0', '--player0',
-        default=None,
+        nargs='+',
+        default=[None],
         help="Path to a ckpt.pt file, or 'solver'")
     parser.add_argument('-1', '--player1',
-        default=None,
+        nargs='+',
+        default=[None],
         help="Path to a ckpt.pt file, or 'solver")
     parser.add_argument('-g', '--game',
         default=None,
@@ -166,16 +184,34 @@ if __name__ == '__main__':
         Game = getattr(module, args.game.split('.')[-1])
 
     for i in (0, 1):
-        playerstr = getattr(args, f'player{i}', None)
+        player_args = getattr(args, f'player{i}')
+        playerstr = player_args[0]
+        kwargs = {}
+        for kwarg in player_args[1:]:
+            k, s = kwarg.split('=')
+            if s == 'True':
+                v = True
+            if s == 'False':
+                v = False
+            try:
+                v = float(s)
+            except:
+                pass
+            try:
+                v = int(s)
+            except:
+                pass
+            kwargs[k] = v
+
         if playerstr is None:
             player = HumanPlayer()
         elif playerstr == 'solver':
-            player = SolverPlayer()
+            player = SolverPlayer(**kwargs)
         else:
             model, config = load_ckpt(playerstr)
             assert Game is None or type(Game()) == type(config.Game()), 'Players must agree on game'
             Game = config.Game
-            player = AlphaZeroPlayer(model)
+            player = AlphaZeroPlayer(model, **kwargs)
         players.append(player)
 
     assert Game is not None, 'Game must be specified either in config or on the command line.'

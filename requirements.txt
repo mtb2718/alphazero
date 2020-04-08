@@ -3,4 +3,5 @@ pytest
 redis
 scipy
 tb-nightly
+tqdm
 pyyaml
