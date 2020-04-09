@@ -87,6 +87,46 @@ class AlphaZero(nn.Module):
         return p, v
 
 
+class MuZeroRepresentation(nn.Module):
+    def __init__(self, shape_in, num_blocks=39, block_channels=256):
+        super(MuZeroRepresentation), self).__init__()
+        self._cbr = nn.Sequential(
+            nn.Conv2d(shape_in[0], block_channels, (3, 3), 1, 1, bias=False),
+            nn.BatchNorm2d(block_channels),
+            nn.ReLU(True),
+        )
+        self._tower = nn.Sequential(*([ResidualBlock(channels=block_channels)] * num_blocks))
+
+    def forward(self, x):
+        # s^0 = h(o_1, ..., o_n)
+        x = self._cbr(x)
+        x = self._tower(x)
+        return x
+
+
+class MuZeroPrediction(nn.Module):
+    def __init__(self, shape_in, shape_out):
+        super(MuZeroPrediction), self).__init__()
+        self._policy_head = PolicyHead(shape_in, shape_out)
+        self._value_head = ValueHead(shape_in)
+
+    def forward(self, x):
+        # p^k, v^k = g(s^k)
+        # TODO: Value prediction should be distribution
+        p = self._policy_head(x)
+        v = self._value_head(x)
+        return p, v
+
+
+class MuZeroDynamics
+    def forward(self, x):
+        # r^k, s^k = g(s^k-1, a^k)
+        # TODO: implement this for real
+        p = self._policy_head(x)
+        v = self._value_head(x)
+        return p, v
+
+
 class UniformModel(nn.Module):
     def forward(self, x, p_valid):
         B = p_valid.shape[0]
