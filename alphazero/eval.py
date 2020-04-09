@@ -29,7 +29,6 @@ class HumanPlayer(Player):
         self._game = game
 
     def get_action(self):
-        print(self._game)
         a = input(f'(Player {self._game.next_player}) Take Action [{self._game.valid_actions}], (q)uit, (d)ebug: ')
         try:
             action = int(a)
@@ -73,15 +72,35 @@ class AlphaZeroPlayer(Player):
         self._tree.kill_siblings()
 
 
-def play(game, players, current_player_index=0):
+class SolverPlayer(Player):
+    def __init__(self):
+        super(SolverPlayer, self).__init__()
+        self._game = None
+
+    def set_game(self, game):
+        self._game = game
+
+    def get_action(self):
+        scores, _ = self._game.solve()
+        best_score = np.max(scores)
+        indices = np.argwhere(scores == best_score)
+        i = np.random.choice(indices.reshape(-1))
+        a = self._game.valid_actions[i]
+        return a, None
+
+
+def play(game, players, show=False):
     """Play game from given state with given players."""
 
     for player in players:
         player.set_game(game)
+        if type(player) == HumanPlayer:
+            show = True
 
     while not game.terminal:
-
-        player = players[current_player_index]
+        player = players[game.next_player]
+        if show:
+            print(game)
         action, game_control = player.get_action()
 
         if game_control is None:
@@ -92,7 +111,6 @@ def play(game, players, current_player_index=0):
                 if p != player:
                     p.observe_action(action)
             game.take_action(action)
-            current_player_index = (current_player_index + 1) % len(players)
         elif game_control == 'q':
             exit(0)
         elif game_control == 'd':
@@ -102,11 +120,12 @@ def play(game, players, current_player_index=0):
             print('Invalid Selection.')
             continue
 
-    print(game)
-    if game.winner >= 0:
-        print(f'Player {game.winner} wins!')
-    else:
-        print('Game drawn!')
+    if show:
+        print(game)
+        if game.winner >= 0:
+            print(f'Player {game.winner} wins!')
+        else:
+            print('Game drawn!')
 
 
 def load_ckpt(ckpt):
@@ -120,19 +139,21 @@ def load_ckpt(ckpt):
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument('-0', '--ckpt0',
+    parser.add_argument('-0', '--player0',
         default=None,
-        help="Path to a ckpt.pt file")
-    parser.add_argument('-1', '--ckpt1',
+        help="Path to a ckpt.pt file, or 'solver'")
+    parser.add_argument('-1', '--player1',
         default=None,
-        help="Path to a ckpt.pt file")
+        help="Path to a ckpt.pt file, or 'solver")
     parser.add_argument('-g', '--game',
         default=None,
         help="Import path of Game to play, if no checkpoints specified.")
+    parser.add_argument('--show',
+        action='store_true',
+        help='Show gameplay TUI. Default True if there are any human players.')
     args = parser.parse_args()
 
     players = []
-    configs = []
 
     Game = None
     if args.game:
@@ -141,20 +162,18 @@ if __name__ == '__main__':
         Game = getattr(module, args.game.split('.')[-1])
 
     for i in (0, 1):
-        ckpt = getattr(args, f'ckpt{i}', None)
-        if ckpt:
-            model, config = load_ckpt(ckpt)
-            if not Game:
-                Game = config.Game
-            else:
-                assert Game == config.Game, 'AlphaZero players must agree on game.'
-            player = AlphaZeroPlayer(model)
-        else:
+        playerstr = getattr(args, f'player{i}', None)
+        if playerstr is None:
             player = HumanPlayer()
-            config = None
+        elif playerstr == 'solver':
+            player = SolverPlayer()
+        else:
+            model, config = load_ckpt(playerstr)
+            assert Game is None or type(Game()) == type(config.Game()), 'Players must agree on game'
+            Game = config.Game
+            player = AlphaZeroPlayer(model)
         players.append(player)
-        configs.append(config)
 
     assert Game is not None, 'Game must be specified either in config or on the command line.'
 
-    play(Game(), players)
+    play(Game(), players, show=args.show)
