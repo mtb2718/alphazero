@@ -1,50 +1,12 @@
 from argparse import ArgumentParser
-import importlib
 from itertools import product
 import os
+import pickle
 
-import numpy as np
 import torch
 
 from alphazero.config import AlphaZeroConfig
-from alphazero.eval import AlphaZeroPlayer, play_game
-from alphazero.mcts import MCTreeNode, run_mcts
-
-'''
-class AlphaZeroPlayer(Player):
-    # TODO: Merge this with the SelfPlayWorker class and add .train()/.eval() mode?
-    def __init__(self, model, debug=False):
-        super(AlphaZeroPlayer, self).__init__()
-        self._model = model
-        self._debug = debug
-        self._game = None
-        self._tree = None
-
-    def set_game(self, game):
-        self._game = game
-        self._tree = MCTreeNode()
-        run_mcts(game, self._tree, self._model, 0, epsilon=0)
-
-    def get_action(self):
-        if self._debug:
-            print(self._game)
-        run_mcts(self._game, self._tree, self._model, 128, epsilon=0)
-        if self._debug:
-            N = self._tree.num_visits
-            P = self._tree.action_prior
-            print(f'Num visits ({np.sum(N)}): {N}')
-            print(f'Action Prior: {P}')
-        action_index = self._tree.greedy_action()
-        self._tree = self._tree.traverse(action_index)
-        self._tree.kill_siblings()
-        action = self._game.valid_actions[action_index]
-        return action, None
-
-    def observe_action(self, action):
-        action_index = self._game.valid_actions.index(action)
-        self._tree = self._tree.traverse(action_index)
-        self._tree.kill_siblings()
-'''
+from alphazero.eval import AlphaZeroPlayer, play
 
 
 def load_ckpt(ckpt):
@@ -56,12 +18,24 @@ def load_ckpt(ckpt):
     return model, config
 
 
-def play_series(Game, player0, player1, N=64):
+def play_series(Game, player0, player1, N):
+    result = {}
+
     # play one game greedily/deterministically
-    play(Game(), [player0, player1])
+    game = Game()
+    play(game, [player0, player1])
+    result['greedy'] = game.history
 
     # play N games with sampling
+    result['sample'] = []
+    player0.exploration = 1
+    player1.exploration = 1
+    for _ in range(N):
+        game = Game()
+        play(game, [player0, player1])
+        result['sample'].append(game.history)
 
+    return result
 
 
 if __name__ == '__main__':
@@ -73,25 +47,29 @@ if __name__ == '__main__':
     logdir = '/data/alphazero/connect4/20200331-perf-sync-1gpu'
     ckpts = os.listdir(os.path.join(logdir, 'ckpt'))
     kwargs = {}
-    for ckpt in ckpts:
+    for ckpt in sorted(ckpts)[::2]:
         candidate = (logdir, ckpt, kwargs)
         candidates.append(candidate)
 
     tournament_results = []
-    for c0, c1 in product(ckpts, repeat=2):
+    for c0, c1 in product(candidates, repeat=2):
         ckpt0 = os.path.join(c0[0], 'ckpt', c0[1])
         m0, conf0 = load_ckpt(ckpt0)
         m0 = m0.cuda()
-        m0.eval()
 
         ckpt1 = os.path.join(c1[0], 'ckpt', c1[1])
         m1, conf1 = load_ckpt(ckpt1)
         m1 = m1.cuda()
-        m1.eval()
 
         assert type(conf0.Game()) == type(conf1.Game()), 'Players must agree on game.'
         p0 = AlphaZeroPlayer(m0, **c0[2])
         p1 = AlphaZeroPlayer(m1, **c1[2])
 
-        results = play_series(conf0.Game, p0, p1)
+        tournament_results.append({
+            '0': c0,
+            '1': c1,
+            'outcome': play_series(conf0.Game, p0, p1, 16)
+        })
 
+    with open('tournament_results.pkl', 'wb') as f:
+        pickle.dump(tournament_results, f)
