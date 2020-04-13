@@ -57,12 +57,8 @@ def run_matchup(matchup):
     return c0, c1, play_series(conf0.Game, p0, p1, 0)
 
 
-if __name__ == '__main__':
-    parser = ArgumentParser()
-    args = parser.parse_args()
-
+def run_tournament():
     candidates = []
-
     logdir = '/data/alphazero/connect4/20200331-perf-sync-1gpu'
     ckpts = os.listdir(os.path.join(logdir, 'ckpt'))
     kwargs = {}
@@ -83,3 +79,23 @@ if __name__ == '__main__':
 
     with open('tournament_results.pkl', 'wb') as f:
         pickle.dump(tournament_results, f)
+
+
+def create_plots():
+
+    with open('tournament_results.pkl', 'rb') as f:
+        results = pickle.load(f)
+    
+    _, conf = load_ckpt(os.path.join(results[0]['0'][0], 'ckpt', results[0]['0'][1]))
+    matchups = {((r['0'][0], r['0'][1]), (r['1'][0], r['1'][1])): r['outcome'] for r in results}
+
+    for matchup, outcome in matchups.items():
+        winner = conf.Game(history=outcome['greedy']).winner
+        outcome['winner'] = winner
+
+if __name__ == '__main__':
+    parser = ArgumentParser()
+    args = parser.parse_args()
+
+    #run_tournament()
+    create_plots()
