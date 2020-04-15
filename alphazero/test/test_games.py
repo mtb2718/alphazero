@@ -4,17 +4,19 @@ from alphazero.games.tictactoe import TicTacToe
 from alphazero.games.connectfour import ConnectFour
 
 
-def test_connect_four():
 
-    # History of a game with perfect play from both sides
-    # From: https://connect4.gamesolver.org/?pos=44444666641267222263721335117357537731155
-    # Note actions are 1-indexed
-    PERFECT_GAME = '44444666641267222263721335117357537731155'
-    actions = [int(c) - 1 for c in PERFECT_GAME]
+# History of a game with perfect play from both sides
+# From: https://connect4.gamesolver.org/?pos=44444666641267222263721335117357537731155
+# Note actions are 1-indexed
+CONNECT_FOUR_PERFECT_PLAY_STR = '44444666641267222263721335117357537731155'
+CONNECT_FOUR_PERFECT_PLAY_HISTORY = [int(c) - 1 for c in CONNECT_FOUR_PERFECT_PLAY_STR]
+
+
+def test_connect_four():
 
     # Test outputs are all as expected for a long game
     game = ConnectFour()
-    for i, a in enumerate(actions):
+    for i, a in enumerate(CONNECT_FOUR_PERFECT_PLAY_HISTORY):
         print(game)
         assert a in game.valid_actions
         assert not game.terminal
