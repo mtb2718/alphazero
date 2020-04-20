@@ -40,7 +40,9 @@ def masked_cross_entropy(input, target, mask):
     input = input.clone()
     input[~mask] = -float('inf')
     log_q = F.log_softmax(input, dim=1)
+    log_q = log_q.clone()
     log_q[~mask] = 0
+    log_q[target == 0] = 0
     H = -torch.sum(target * log_q, dim=1, keepdim=True)
     return H
 

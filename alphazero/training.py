@@ -5,7 +5,10 @@ from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import DataLoader
 
 from alphazero.config import AlphaZeroConfig
-from alphazero.loss import masked_cross_entropy
+from alphazero.loss import (
+    masked_cross_entropy,
+    masked_kl_div)
+
 from alphazero.replay_buffer import ReplayBufferSampler
 
 
@@ -84,27 +87,28 @@ class TrainingWorker:
                 v_star = batch['v*'][solved].to(self._device)
                 p_star = F.softmax(move_scores, dim=1)
 
+                # KL divergence of pseudo-optimal policy and target, predicted policy
                 logp = torch.log(p)
-                Hpspi, Evsz = self._loss(p_star, v_star, logp[solved], z[solved], p_valid[solved])
-                Hpsph, Evsvh = self._loss(p_star, v_star, p_hat[solved], v_hat[solved], p_valid[solved])
-                self._summary_writer.add_scalar('eval/value_target_mse', Evsz, train_iter)
-                self._summary_writer.add_scalar('eval/value_prediction_mse', Evsvh, train_iter)
-                self._summary_writer.add_scalar('eval/policy_target_xentropy', Hpspi, train_iter)
-                self._summary_writer.add_scalar('eval/policy_prediction_xentropy', Hpsph, train_iter)
+                KL_policy_target = masked_kl_div(logp[solved], p_star, p_valid[solved]).mean()
+                KL_policy_prediction = masked_kl_div(p_hat[solved], p_star, p_valid[solved]).mean()
+                self._summary_writer.add_scalar('eval/policy_target_KL', KL_policy_target, train_iter)
+                self._summary_writer.add_scalar('eval/policy_prediction_KL', KL_policy_prediction, train_iter)
 
-                # ^^ Above are eval of current batch
-                # TODO: Add separate eval for specific opening / end game states
+                # True MSE of target & predicted state values
+                mse_target_value = ((v_star - z[solved]) ** 2).mean()
+                mse_predicted_value = ((v_star - v_hat[solved]) ** 2).mean()
+                self._summary_writer.add_scalar('eval/value_target_mse', mse_target_value, train_iter)
+                self._summary_writer.add_scalar('eval/value_prediction_mse', mse_predicted_value, train_iter)
 
                 # Entropy of target policy, from MCTS
-                # Protect against log(0) resulting in nan
-                m = p_valid * (logp < -1e4)
-                logp[m] = -999.
                 Ht = masked_cross_entropy(logp, p, p_valid).mean()
                 self._summary_writer.add_scalar('eval/policy_target_entropy', Ht, train_iter)
 
                 # Entropy of policy prediction
                 Hp = masked_cross_entropy(p_hat, F.softmax(p_hat, dim=1), p_valid).mean()
                 self._summary_writer.add_scalar('eval/policy_prediction_entropy', Hp, train_iter)
+
+                # TODO: Add separate eval for specific opening / end game states
 
         # System state logging
         Gtotal = self._dataset.db.num_games()
