@@ -9,6 +9,7 @@ torch.set_printoptions(sci_mode=False)
 
 def test_masked_cross_entropy():
     inputs = torch.tensor([
+        [0, 1, 1, 0],
         [ 0.,  1.,   1.,  1.],
         [ 0.,  0.,   0.,  0.],
         [ 0.,  0.,   0., -999.],
@@ -18,6 +19,7 @@ def test_masked_cross_entropy():
         [ 4.,  4.,   4.,  4.],
         [10., 90., -70.,  0.]], dtype=torch.float32)
     target = torch.tensor([
+        [0, 0.5, 0.5, 0],
         [0.,   0.36, 0.48, 0.16],
         [0.25, 0.25, 0.25, 0.25],
         [0.,   0.,   0.5,  0.5 ],
@@ -27,6 +29,7 @@ def test_masked_cross_entropy():
         [0.,   0.5,  0.5,  0.  ],
         [0.05, 0.9,  0.,   0.05]], dtype=torch.float32)
     mask = torch.tensor([
+        [1, 1, 1, 1],
         [0, 1, 1, 1],
         [0, 0, 0, 0],
         [0, 0, 1, 1],
@@ -63,9 +66,10 @@ def test_masked_cross_entropy():
         Hpqi_expected = -torch.sum(target[i][m] * log_q)
         print('Expected Hpq', Hpqi_expected)
         print('Hpq', Hpq[i])
-        assert torch.all(Hpq[i] == Hpqi_expected)
+        assert Hpq[i] == Hpqi_expected
 
         KLpqi_expected = F.kl_div(log_q, target[i][m], reduction='sum')
         print('Expected KLpq', KLpqi_expected)
         print('KLpq', KLpq[i])
-        assert torch.all(KLpq[i] == KLpqi_expected)
+        assert KLpq[i] == KLpqi_expected
+        assert KLpq[i] >= 0.

@@ -83,8 +83,9 @@ class TrainingWorker:
         solved = batch['solved']
         if torch.any(solved):
             with torch.no_grad():
-                move_scores = batch['move_scores'][solved].to(self._device)
                 v_star = batch['v*'][solved].to(self._device)
+                move_scores = batch['move_scores'][solved].to(self._device)
+                move_scores[~p_valid[solved]] = -float('inf')
                 p_star = F.softmax(move_scores, dim=1)
 
                 # KL divergence of pseudo-optimal policy and target, predicted policy
