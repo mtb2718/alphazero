@@ -11,15 +11,12 @@ import seaborn as sn
 import torch
 from tqdm import tqdm
 
+from alphazero.agents import AlphaZeroPlayer, SolverPlayer
 from alphazero.config import AlphaZeroConfig
 from alphazero.elo import bayeselo, GameOutcome, load_outcomes, save_outcomes
-from alphazero.eval import AlphaZeroPlayer, SolverPlayer, play
-from alphazero.tournament import LogDir, regret
-
-# Evaluations / Plots:
-# [X] Matrix plots for win/loss/draw counts, ckpt vs solver
-# [X] Plot of ELO vs train iter
-# [ ] Some visualization of ELO estimate confidence?
+from alphazero.eval import play
+from alphazero.logdir import LogDir
+from alphazero.tournament import regret
 
 
 def run_matchup(job):
