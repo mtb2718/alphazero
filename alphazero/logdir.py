@@ -13,7 +13,7 @@ class LogDir:
     def checkpoints(self):
         ckptdir = os.path.join(self.path, 'ckpt')
         if os.path.exists(ckptdir):
-            return [int(p.split('.')[0]) for p in os.listdir(ckptdir)]
+            return sorted([int(p.split('.')[0]) for p in os.listdir(ckptdir)])
         return []
 
     @property

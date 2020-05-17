@@ -32,35 +32,44 @@ display(HTML("<style>.container { width:95% !important; }</style>"))
 # %autoreload 2
 
 # +
-solver_outcomes = load_outcomes('/data/alphazero/evals/connect4/solvers/results.txt')
+OUTCOME_FILES = {
+    '20200331-perf-sync-1gpu': ['/data/alphazero/connect4/20200331-perf-sync-1gpu/eval/eval_outcomes.txt'],
+    '20200403-db0': ['/data/alphazero/connect4/20200403-db0/eval/eval_outcomes.txt'],
+    '20200404-db1-b512': [
+        '/data/alphazero/connect4/20200404-db1-b512/eval/eval_outcomes.txt',
+        '/data/alphazero/connect4/20200404-db1-b512/eval-search-v-model/eval_outcomes.txt',
+    ],
+    'solvers': ['/data/alphazero/evals/connect4/solvers/results.txt'],
+}
 
-CKPT_DIRS = [
-    '20200331-perf-sync-1gpu',
-    '20200403-db0',
-    '20200404-db1-b512',
-]
-
-
-ckpt_outcomes = {d: load_outcomes(f'/data/alphazero/connect4/{d}/eval/eval_outcomes.txt') for d in CKPT_DIRS}
+outcomes = {}
+for name, files in OUTCOME_FILES.items():
+    outcomes[name] = []
+    for file in files:
+        outcomes[name].extend(load_outcomes(file))
 
 def _fixname(d, name):
     if 'ckpt' in name:
-        ckpt = name.split('_')[-1]
-        return f'{d}_{ckpt}'
+        toks = name.split('_')
+        ckpt = toks[1]
+        search = 128
+        if len(toks) > 2:
+            search = int(toks[2])
+        if ckpt == 'uniform':
+            p = 'uniform'
+        else:
+            p = f'{d}:{ckpt}'
+        return f'{p}:{search}'
     else:
-        return f'solver_{name}'
-print(ckpt_outcomes['20200403-db0'][0])
-for d, outcomes in ckpt_outcomes.items():
-    for i, o in enumerate(outcomes):
-        outcomes[i] = o._replace(player0=_fixname(d, o.player0), player1=_fixname(d, o.player1))
-print(ckpt_outcomes['20200403-db0'][0])
+        return f'solver:{name}'
 
+# Fix ckpt player names
+for n, os in outcomes.items():
+    for i, o in enumerate(os):
+        outcomes[n][i] = o._replace(player0=_fixname(n, o.player0), player1=_fixname(n, o.player1))
 
-# Need to change name
-all_outcomes = [o._replace(player0=_fixname('', o.player0), player1=_fixname('', o.player1)) for o in solver_outcomes]
-for ckpt_outcome in ckpt_outcomes.values():
-    all_outcomes.extend(ckpt_outcome)
-
+# Compute ELOs
+all_outcomes = [o for os in outcomes.values() for o in os]
 advantage_elo, draw_elo, ratings = bayeselo(all_outcomes)
 
 print('Advantage ELO:', advantage_elo)
@@ -70,18 +79,36 @@ players = {}
 player_ratings = {}
 solvers = []
 solver_ratings = []
+searchers = []
+searcher_ratings = []
+
 for p, r in ratings.items():
-    toks = p.split('_')
-    suffix = toks[-1]
-    name = '_'.join(toks[:-1])
+    toks = p.split(':')
+    name = toks[0]
+    if len(toks) == 2:
+        suffix = toks[1]
+    elif len(toks) == 3:
+        ckpt = toks[1]
+        search = toks[2]
+        name = f'{name}_{search}'
+    else:
+        assert False
+
     if name == 'solver':
         solvers.append(suffix)
         solver_ratings.append(r)
+    elif name == 'uniform':
+        searchers.append(suffix)
+        searcher_ratings.append(r)
     else:
         if name not in players:
             players[name] = []
             player_ratings[name] = []
-        players[name].append(int(suffix))
+        try:
+            players[name].append(int(ckpt))
+        except:
+            print(p)
+            raise
         player_ratings[name].append(r)
 
 # sort
@@ -94,16 +121,25 @@ for logdir in players.keys():
 solvers, solver_ratings = list(zip(*reversed(sorted(zip(solvers, solver_ratings)))))
 solvers = list(solvers)
 
+searchers, searcher_ratings = list(zip(*reversed(sorted(zip(searchers, searcher_ratings)))))
+searchers = list(searchers)
+
 xlim = [0, max_ckpt + 1]
 fig = plt.figure(figsize=(24,8))
 for logdir in sorted(players.keys()):
-    plt.plot(players[logdir], player_ratings[logdir])
+    if len(players[logdir]) > 1:
+        plt.plot(players[logdir], player_ratings[logdir])
+    else:
+        r = player_ratings[logdir][0]
+        plt.plot(xlim, [r, r])
+        #plt.text(xlim[0], r, s, color='cyan')
+        
 ax = fig.axes[0]
 plt.grid()
 plt.xticks([0] + players[list(players.keys())[0]][3::4], rotation=90)
 ax.yaxis.set_major_locator(ticker.MultipleLocator(100))
 plt.xlim(xlim)
-plt.title('AlphaZero vs Solvers')
+plt.title(f'AlphaZero vs Solvers')
 plt.xlabel('Training Step')
 plt.ylabel('BayesELO Rating')
 plt.legend(sorted(players.keys()))
@@ -111,6 +147,10 @@ plt.legend(sorted(players.keys()))
 for s, r in zip(solvers, solver_ratings):
     plt.plot(xlim, [r, r], 'r--')
     plt.text(xlim[0], r, s, color='r')
+for s, r in zip(searchers, searcher_ratings):
+    plt.plot(xlim, [r, r], 'g--')
+    plt.text(xlim[0], r, s, color='g')
+
 fig.show()
 
 # +

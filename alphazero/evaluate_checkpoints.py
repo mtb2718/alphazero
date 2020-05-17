@@ -17,22 +17,26 @@ from alphazero.elo import bayeselo, GameOutcome, load_outcomes, save_outcomes
 from alphazero.eval import play
 from alphazero.logdir import LogDir
 from alphazero.tournament import regret
+from alphazero.models import UniformModel
 
 
 def run_matchup(job):
-    (logdir, ckpt) = job[0]
+    (logdir, ckpt, num_simulations) = job[0]
     solver_temp = job[1]
-
     solver_player = SolverPlayer(temperature=solver_temp)
-    model = logdir.load_checkpoint(ckpt)
-    wid = int(mp.current_process().name.split('-')[1])
-    ngpu = torch.cuda.device_count()
-    if ngpu > 0:
-        # TODO: Debug model dups on both GPUs / ckpt loading
-        model = model.to(torch.device(f'cuda:{wid % ngpu}'))
+
+    if ckpt == 'uniform':
+        model = UniformModel()
+    else:
+        model = logdir.load_checkpoint(ckpt)
+        wid = int(mp.current_process().name.split('-')[1])
+        ngpu = torch.cuda.device_count()
+        if ngpu > 0:
+            # TODO: Debug model dups on both GPUs / ckpt loading
+            model = model.to(torch.device(f'cuda:{wid % ngpu}'))
     a0player = AlphaZeroPlayer(model)
-    # TODO: Put logidr in path name
-    pname = f'ckpt_{ckpt}'
+    a0player.num_simulations = num_simulations
+    pname = f'ckpt_{ckpt}_{num_simulations}' # TODO: Put logidr in path name
 
     Game = logdir.config.Game
     outcomes = []
@@ -55,7 +59,11 @@ def run_matchup(job):
 
 
 def run_matchups(logdir, ckpts, solver_temps, num_games):
-    candidates = [(logdir, ckpt) for ckpt in ckpts]
+    #candidates = [(logdir, ckpt) for ckpt in ckpts]
+    candidates = [(logdir, ckpt, 0) for ckpt in ckpts[9::10]]
+    candidates += [(logdir, 'uniform', S) for S in [32, 64, 128, 256, 512]]
+    candidates += [(logdir, 10000, S) for S in [128, 256, 512]]
+
     matchups = list(product(candidates, solver_temps))
 
     jobs = matchups * num_games
@@ -145,15 +153,21 @@ def plot_ratings(outdir, solver_outcomes, eval_outcomes):
 def run_evaluation(logdir, ckpts, solver_outcomes, outdir, num_games_per_matchup):
     solver_temps = sorted(set([float(g.player0) for g in solver_outcomes]))
 
-    #eval_outcomes = run_matchups(logdir, ckpts, solver_temps, num_games_per_matchup)
-    #save_outcomes(eval_outcomes, f'{outdir}/eval_outcomes.txt')
-    eval_outcomes = load_outcomes(f'{outdir}/eval_outcomes.txt')
+    eval_outcomes = run_matchups(logdir, ckpts, solver_temps, num_games_per_matchup)
+    save_outcomes(eval_outcomes, f'{outdir}/eval_outcomes.txt')
+    #eval_outcomes = load_outcomes(f'{outdir}/eval_outcomes.txt')
 
     # dump results in pickle
     plot_ratings(outdir, solver_outcomes, eval_outcomes)
 
 
 if __name__ == '__main__':
+    # Might want to eval:
+    #   Solver v Solver
+    #   Solver v ckpt
+    #   Sovler v ckpt dir
+    #   ckpt (dir) v ckpt (dir)
+
     parser = ArgumentParser()
     parser.add_argument('-c', '--ckpt',
         nargs=2,

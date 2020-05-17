@@ -36,6 +36,7 @@ class AlphaZeroPlayer(Player):
     # TODO: Merge this with the SelfPlayWorker class and add .train()/.eval() mode?
     def __init__(self, model, debug=False):
         super(AlphaZeroPlayer, self).__init__()
+        self.num_simulations = 128
         self.exploration = 0
         self._model = model
         self._debug = debug
@@ -50,7 +51,7 @@ class AlphaZeroPlayer(Player):
     def get_action(self):
         if self._debug:
             print(self._game)
-        run_mcts(self._game, self._tree, self._model, 128, epsilon=0)
+        run_mcts(self._game, self._tree, self._model, self.num_simulations, epsilon=0)
         if self._debug:
             N = self._tree.num_visits
             P = self._tree.action_prior
@@ -67,6 +68,8 @@ class AlphaZeroPlayer(Player):
 
     def observe_action(self, action):
         action_index = self._game.valid_actions.index(action)
+        if not self._tree.expanded:
+            run_mcts(self._game, self._tree, self._model, 0, epsilon=0)
         self._tree = self._tree.traverse(action_index)
         self._tree.kill_siblings()
 
@@ -101,6 +104,7 @@ class SolverPlayer(Player):
         return action, None
 
 
+# TODO: Load player from CLI/config args
 def load_agent_from_args(name, kwargs):
 
     Agent = {
